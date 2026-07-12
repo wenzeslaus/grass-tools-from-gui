@@ -1,0 +1,64 @@
+<h2>DESCRIPTION</h2>
+
+<em>ps.render</em> renders a <em><a href="ps.map.html">ps.map</a></em>
+mapping instruction file directly to PDF, PNG, PostScript (PS), or
+Encapsulated PostScript (EPS). It runs <em>ps.map</em> to produce
+PostScript and, for PDF and PNG output, converts the result with
+Ghostscript, so a separate conversion step is not needed.
+
+<p>
+The <b>input</b> option takes a file with <em>ps.map</em> mapping
+instructions and the <b>output</b> option is the file to create. The
+<b>format</b> option selects the output format (default is
+<code>pdf</code>). The <b>resolution</b> option sets the resolution in
+DPI for PNG output (default is 300); it has no effect on the other
+formats. The <b>-r</b> flag is passed through to <em>ps.map</em> and
+rotates the plot 90 degrees on the page.
+
+<h2>NOTES</h2>
+
+PDF and PNG output require Ghostscript. On Linux and macOS, PDF
+conversion uses the <em>ps2pdf</em> script and PNG conversion uses the
+<em>gs</em> program, both part of Ghostscript. On Windows, the
+Ghostscript console executable (<em>gswin64c</em> or <em>gswin32c</em>)
+must be on PATH. PS and EPS output do not require Ghostscript.
+
+<p>
+The page size of the PDF and PNG output is taken from the
+<code>paper</code> instruction in the input file (A4 if not specified),
+as recorded by <em>ps.map</em> in the generated PostScript.
+
+<h2>EXAMPLES</h2>
+
+Render an instruction file to PDF (the default format):
+
+<div class="code"><pre>
+ps.render input=map.psmap output=map.pdf
+</pre></div>
+
+Render to PNG at 150 DPI:
+
+<div class="code"><pre>
+ps.render input=map.psmap output=map.png format=png resolution=150
+</pre></div>
+
+Render to plain PostScript, rotating the plot to landscape:
+
+<div class="code"><pre>
+ps.render -r input=map.psmap output=map.ps format=ps
+</pre></div>
+
+<h2>SEE ALSO</h2>
+
+<em>
+<a href="g.region.html">g.region</a>,
+<a href="ps.map.html">ps.map</a>
+</em>
+
+<h2>AUTHORS</h2>
+
+Vaclav Petras, NC State University, Center for Geospatial Analytics
+
+<p>
+Conversion logic extracted from the wxGUI Cartographic Composer
+by various authors.
