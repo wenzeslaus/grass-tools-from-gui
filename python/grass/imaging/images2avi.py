@@ -180,7 +180,7 @@ def readAvi(filename, asNumpy=True):
     shutil.copy(filename, os.path.join(tempDir, "input.avi"))
 
     # Run ffmpeg
-    command = "ffmpeg -i input.avi im%d.jpg"
+    command = ["ffmpeg", "-i", "input.avi", "im%d.jpg"]
     with subprocess.Popen(
         command,
         cwd=tempDir,
