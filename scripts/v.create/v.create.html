@@ -17,6 +17,18 @@ The whole operation behaves atomically: if creating or connecting the
 attribute table fails, the new vector map is removed again, so a
 failed call does not leave a map without the requested table behind.
 
+<p>
+When the vector output format of the mapset is set to an external
+format with <em>v.external.out</em>, the new map is created as a new
+layer in the external datasource (OGR or PostGIS) and registered in
+the current mapset as a link, as if created by <em>v.external</em>.
+Unlike a native map, an external layer stores a single feature type,
+selected with the <b>type</b> option: <code>point</code>,
+<code>line</code> (linestring), or <code>boundary</code> (polygon).
+The attribute table options (<b>columns</b>, <b>key</b>, <b>layer</b>,
+<b>-t</b>) cannot be used in this case, because the new layer gets an
+attribute table managed by the external format.
+
 <h2>NOTES</h2>
 
 The new map is created by <em>v.edit</em> with <code>tool=create</code>
@@ -28,7 +40,14 @@ appended to the table name).
 
 <p>
 An existing map of the same name is overwritten only when the
-<code>--overwrite</code> flag is used.
+<code>--overwrite</code> flag is used. With an external output format,
+this also applies to an existing layer of the same name in the
+datasource.
+
+<p>
+For the native format, the <b>type</b> option is ignored: a native
+vector map can store any mix of feature types, so an empty map does
+not have a feature type yet.
 
 <h2>EXAMPLES</h2>
 
@@ -55,12 +74,23 @@ v.create output=new_points columns="name varchar(20),value double precision"
 The new map can then be edited interactively, e.g., in the GUI
 digitizer, or programmatically with <em>v.edit</em>.
 
+<p>
+Create a new empty linestring layer in a GeoPackage (and a link to it
+in the current mapset):
+
+<div class="code"><pre>
+v.external.out output=data.gpkg format=GPKG
+v.create output=new_lines type=line
+</pre></div>
+
 <h2>SEE ALSO</h2>
 
 <em>
 <a href="v.db.addtable.html">v.db.addtable</a>,
 <a href="v.db.connect.html">v.db.connect</a>,
 <a href="v.edit.html">v.edit</a>,
+<a href="v.external.html">v.external</a>,
+<a href="v.external.out.html">v.external.out</a>,
 <a href="v.in.ascii.html">v.in.ascii</a>
 </em>
 

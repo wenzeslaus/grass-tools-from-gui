@@ -15,6 +15,16 @@ The whole operation behaves atomically: if creating or connecting the
 attribute table fails, the new vector map is removed again, so a
 failed call does not leave a map without the requested table behind.
 
+When the vector output format of the mapset is set to an external
+format with *v.external.out*, the new map is created as a new layer in
+the external datasource (OGR or PostGIS) and registered in the current
+mapset as a link, as if created by *v.external*. Unlike a native map,
+an external layer stores a single feature type, selected with the
+**type** option: `point`, `line` (linestring), or `boundary` (polygon).
+The attribute table options (**columns**, **key**, **layer**, **-t**)
+cannot be used in this case, because the new layer gets an attribute
+table managed by the external format.
+
 ## NOTES
 
 The new map is created by *v.edit* with `tool=create` and the table is
@@ -24,7 +34,12 @@ The table is named after the vector map (for **layer** higher than 1,
 the layer number is appended to the table name).
 
 An existing map of the same name is overwritten only when the
-`--overwrite` flag is used.
+`--overwrite` flag is used. With an external output format, this also
+applies to an existing layer of the same name in the datasource.
+
+For the native format, the **type** option is ignored: a native vector
+map can store any mix of feature types, so an empty map does not have
+a feature type yet.
 
 ## EXAMPLES
 
@@ -51,10 +66,19 @@ v.create output=new_points columns="name varchar(20),value double precision"
 The new map can then be edited interactively, e.g., in the GUI
 digitizer, or programmatically with *v.edit*.
 
+Create a new empty linestring layer in a GeoPackage (and a link to it
+in the current mapset):
+
+```sh
+v.external.out output=data.gpkg format=GPKG
+v.create output=new_lines type=line
+```
+
 ## SEE ALSO
 
 *[v.db.addtable](v.db.addtable.md), [v.db.connect](v.db.connect.md),
-[v.edit](v.edit.md), [v.in.ascii](v.in.ascii.md)*
+[v.edit](v.edit.md), [v.external](v.external.md),
+[v.external.out](v.external.out.md), [v.in.ascii](v.in.ascii.md)*
 
 ## AUTHORS
 

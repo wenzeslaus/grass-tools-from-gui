@@ -43,6 +43,15 @@
 # % required: no
 # % guisection: Table
 # %end
+# %option
+# % key: type
+# % type: string
+# % options: point,line,boundary
+# % answer: point
+# % required: no
+# % label: Feature type of the new layer in external output formats
+# % description: A new OGR or PostGIS layer (output format set by v.external.out) stores a single feature type; ignored for the native format
+# %end
 # %flag
 # % key: t
 # % description: Create attribute table even when no columns are specified (table contains only the key column)
@@ -56,16 +65,76 @@ import grass.script as gs
 from grass.exceptions import CalledModuleError
 
 
+def external_layers(dsn):
+    """Return names of layers in an external OGR datasource.
+
+    A datasource which does not exist yet (or cannot be opened) has no
+    layers to collide with, so an empty list is returned in that case,
+    with the error output discarded (a datasource which is truly broken
+    fails later in v.edit with its own error message).
+    """
+    process = gs.pipe_command("v.external", flags="l", input=dsn, stderr=gs.PIPE)
+    output = process.communicate()[0]
+    if process.returncode != 0:
+        return []
+    return gs.decode(output).splitlines()
+
+
 def main():
     options, flags = gs.parser()
     output = options["output"]
     columns = options["columns"]
     create_table = bool(columns) or flags["t"]
 
+    external = gs.parse_command("v.external.out", flags="g")
+    is_native = external["format"] == "native"
+
+    create_args = {}
+    if not is_native:
+        if create_table:
+            gs.fatal(
+                _(
+                    "Creating an attribute table (columns or -t) is not"
+                    " supported for the external output format {} set with"
+                    " v.external.out (the new layer gets a table managed by"
+                    " the external format)"
+                ).format(external["format"])
+            )
+        # An external layer stores a single feature type, so v.edit
+        # needs one; for the native format, v.edit ignores type.
+        create_args["type"] = options["type"]
+        # v.edit does not check for an existing layer in the external
+        # datasource and would replace it, so check here.
+        if not gs.overwrite() and output in external_layers(external["dsn"]):
+            gs.fatal(
+                _(
+                    "Vector map <{}> already exists in the external"
+                    " datasource. To overwrite, use the --overwrite flag"
+                ).format(output)
+            )
+
     try:
-        gs.run_command("v.edit", map=output, tool="create", quiet=True)
+        gs.run_command("v.edit", map=output, tool="create", quiet=True, **create_args)
     except CalledModuleError:
         gs.fatal(_("Unable to create vector map <{}>").format(output))
+
+    if (
+        not is_native
+        and not gs.find_file(output, element="vector", mapset=gs.gisenv()["MAPSET"])[
+            "name"
+        ]
+    ):
+        # v.edit registers the new external layer in the mapset itself;
+        # this is a safeguard for backends where it does not, mirroring
+        # the GUI new-vector-map dialog.
+        try:
+            gs.run_command(
+                "v.external", input=external["dsn"], layer=output, quiet=True
+            )
+        except CalledModuleError:
+            gs.fatal(
+                _("Unable to register vector map <{}> in the mapset").format(output)
+            )
 
     if create_table:
         # The map is empty, so v.db.addtable's warning about overwriting
