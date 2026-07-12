@@ -2,26 +2,39 @@
 
 <em>g.model.export</em> converts a model created in the wxGUI
 Graphical Modeler (<em>g.gui.gmodeler</em>) and stored in a GRASS
-Model file (<code>.gxm</code>) into a runnable script. The only
-<b>format</b> currently supported is <code>python</code>: a Python
-script with a GRASS parser interface which runs the model actions with
+Model file (<code>.gxm</code>) into a runnable script or process
+definition. The <b>format</b> option selects the output:
+
+<ul>
+<li><code>python</code> (default): a Python script with a GRASS parser
+interface which runs the model actions with
 <code>grass.script.run_command</code>, equivalent to the
-<em>Python</em> export of the Graphical Modeler.
+<em>Python</em> export of the Graphical Modeler.</li>
+<li><code>pywps</code>: a Python script with a PyWPS
+<code>Process</code> subclass whose handler runs the model actions,
+equivalent to the <em>PyWPS</em> export of the Graphical Modeler.</li>
+<li><code>actinia</code>: an actinia process chain in JSON, equivalent
+to the <em>actinia</em> export of the Graphical Modeler.</li>
+</ul>
 
-<p>
 Model variables and options marked as parameterized in the model
-become options of the generated script. A parameterized option of an
-action is named after the action and the option (e.g., the
-parameterized <b>color</b> option of an <em>r.colors</em> action with
-id 7 becomes <code>rcolors7_color</code>); variables keep their names.
-Default values from the model become the option defaults.
-Parameterized flags become <code>True</code>/<code>False</code>
-options of the script.
+become options of the generated script (<code>python</code>), process
+inputs (<code>pywps</code>), or Jinja template placeholders
+(<code>actinia</code>). A parameterized option of an action is named
+after the action and the option (e.g., the parameterized <b>color</b>
+option of an <em>r.colors</em> action with id 7 becomes
+<code>rcolors7_color</code>); variables keep their names. Default
+values from the model become the option, input, or placeholder
+defaults. Parameterized flags become
+<code>True</code>/<code>False</code> options or inputs of the script
+(<code>python</code> and <code>pywps</code>; actinia does not support
+parameterized flags and they are exported in their current state with
+a warning).
 
 <p>
-Data marked as intermediate in the model is removed by a
-<code>cleanup()</code> function registered to run at the end of the
-generated script.
+With <code>format=python</code>, data marked as intermediate in the
+model is removed by a <code>cleanup()</code> function registered to
+run at the end of the generated script.
 
 <h2>NOTES</h2>
 
@@ -39,36 +52,84 @@ warning.</li>
 writes: a list of values (translated to a Python <code>for</code>
 statement) and a command in backticks (translated to iteration over
 <code>read_command(...).splitlines()</code>). Loop conditions
-referencing model variables are not supported and cause an error. An
-action belonging to more than one loop (nested loops) causes an
-error.</li>
-<li>If-else conditions: not supported; the tool ends with an error
-when the model contains an if-else item.</li>
+referencing model variables are not supported and cause an error.</li>
+<li>If-else conditions: supported for the <code>python</code> and
+<code>pywps</code> formats. The condition text is a Python expression;
+model variable references in it become option or input lookups
+converted to the variable's type (e.g., <code>%{threshold} &gt; 5</code>
+with an integer variable becomes
+<code>int(options["threshold"]) &gt; 5</code>), so the branch is
+selected by the value given at run time. The <code>if</code> branch
+actions run when the condition is true, the <code>else</code> branch
+actions otherwise.</li>
+<li>Blocks cannot be nested: an action belonging to more than one loop
+or if-else condition causes an error.</li>
 <li>Intermediate data: raster, vector, and 3D raster data items marked
 as intermediate are removed in <code>cleanup()</code>; names
 containing a variable reference cannot be resolved there and are
 listed in a comment instead.</li>
-<li>Actions disabled in the model are included as commented-out
-code.</li>
+<li>Actions disabled in the model are included as commented-out code
+(<code>python</code> and <code>pywps</code>); the actinia export
+leaves them out with a warning because JSON has no comments.</li>
 <li>Layout-only elements (positions, sizes, comment items) are
 ignored.</li>
 </ul>
 
-The generated script is not byte-identical to the output of the
-Graphical Modeler's Python export, but it is equivalent: it has the
-same parser interface (option keys, types, and defaults) and runs the
-same commands. Unlike the GUI export, this tool skips (comments out)
-disabled actions instead of running them and exports loops.
+The generated output is not byte-identical to the output of the
+Graphical Modeler's exports, but it is equivalent: the same interface
+(option keys, types, and defaults; process inputs and outputs; process
+chain entries) and the same commands. Unlike the GUI exports, this
+tool skips (comments out) disabled actions instead of running them,
+exports loops and if-else conditions instead of silently dropping
+them, and writes only the option values stored in the model (the GUI
+exports add interface defaults such as <code>nprocs=0</code>).
 
 <p>
 The tool needs the interface descriptions of the tools used by the
 model, so those tools must be installed when exporting.
 
 <p>
-Export to PyWPS and actinia formats, which the Graphical Modeler also
-offers (<code>ModelToPyWPS</code> and <code>ModelToActinia</code> in
-<code>gui/wxpython/gmodeler/model_convert.py</code>), is future work
-for the <b>format</b> option.
+PyWPS format details, following the <code>ModelToPyWPS</code> export
+of the Graphical Modeler
+(<code>gui/wxpython/gmodeler/model_convert.py</code>):
+
+<ul>
+<li>Parameterized options become <code>LiteralInput</code> objects, or
+<code>ComplexInput</code> objects when the option name contains
+<code>input</code> and the data type is raster (GeoTIFF) or vector
+(GML); model variables become <code>LiteralInput</code> objects (the
+GUI export leaves variable references unresolved in the generated
+commands).</li>
+<li>New non-intermediate raster and vector outputs of actions outside
+loops and conditions become <code>ComplexOutput</code> objects; the
+handler exports them with <em>r.out.gdal</em> (GeoTIFF) or
+<em>v.out.ogr</em> (GML) to the temporary directory and assigns the
+file to the process response. Outputs of other data types, and outputs
+inside loops or conditions, are skipped with a warning (the GUI export
+writes non-compiling <code>WRITE YOUR ...</code> placeholders for
+other data types).</li>
+<li>There is no cleanup of intermediate data (same as the GUI export);
+a PyWPS process is expected to run in a disposable mapset.</li>
+</ul>
+
+actinia format details, following the <code>ModelToActinia</code>
+export of the Graphical Modeler:
+
+<ul>
+<li>The output is a process chain with one entry per enabled action,
+in execution order, with the stored option values split into
+<code>inputs</code> and <code>outputs</code> by the option direction
+in the tool interface.</li>
+<li>Parameterized options and model variable references become Jinja
+placeholders (<code>{{ name }}</code>) and the process list is wrapped
+in a <code>template</code> object when any placeholder is present.
+Placeholder defaults are quoted as Jinja string literals when they are
+not numbers (the GUI export writes them unquoted, which Jinja
+evaluates as undefined names).</li>
+<li>Loops and if-else conditions cannot be represented in a process
+chain and cause an error; long flags (e.g., <code>overwrite</code>)
+have no process chain equivalent and are skipped with a warning.</li>
+</ul>
 
 <p>
 The <code>.gxm</code> parsing code is duplicated in
@@ -85,6 +146,15 @@ option defaults overridden:
 <div class="code"><pre>
 g.model.export input=zipcodes_avg_elevation.gxm output=avg_elevation.py
 python3 avg_elevation.py rcolors7_color=viridis
+</pre></div>
+
+<p>
+Convert the same model to a PyWPS process and to an actinia process
+chain:
+
+<div class="code"><pre>
+g.model.export input=zipcodes_avg_elevation.gxm output=avg_elevation_wps.py format=pywps
+g.model.export input=zipcodes_avg_elevation.gxm output=avg_elevation.json format=actinia
 </pre></div>
 
 <h2>SEE ALSO</h2>

@@ -16,7 +16,7 @@
 #############################################################################
 
 # %module
-# % description: Converts a model prepared in the wxGUI Graphical Modeler to a Python script.
+# % description: Converts a model prepared in the wxGUI Graphical Modeler to a script.
 # % keyword: general
 # % keyword: modeler
 # % keyword: model
@@ -26,18 +26,20 @@
 # % description: Name of model file (.gxm) to convert
 # %end
 # %option G_OPT_F_OUTPUT
-# % description: Name for the generated Python script
+# % description: Name for the generated file
 # %end
 # %option
 # % key: format
 # % type: string
 # % required: yes
-# % options: python
+# % options: python,pywps,actinia
 # % answer: python
-# % description: Format of the generated script
+# % descriptions: python;Python script;pywps;PyWPS process (Python);actinia;actinia process chain (JSON)
+# % description: Format of the generated file
 # %end
 
 import ast
+import json
 import operator
 import pathlib
 import re
@@ -51,10 +53,11 @@ import grass.script as gs
 from grass.exceptions import CalledModuleError, ScriptError
 from grass.script import task as gtask
 
-# Begin of the .gxm parser shared verbatim with g.model.run; keep both
-# copies identical. When porting to the main source tree, move this parser
-# to a Python library (e.g., a new grass.models package) so that the GUI
-# modeler can use it as well.
+# Begin of the .gxm parser shared with g.model.run. This copy extends the
+# shared parser with if-else condition parsing; when porting to the main
+# source tree, unify the copies and move the parser to a Python library
+# (e.g., a new grass.models package) so that the GUI modeler can use it as
+# well.
 
 UNRESOLVED_VARIABLE = re.compile(r"%\{([^}]+)\}")
 
@@ -90,13 +93,13 @@ def parse_gxm(path):
 
     - properties: name, description, author, and overwrite (bool)
     - variables: variable name to {type, value, description} mapping
-    - items: actions and loops ordered by item id, distinguished by "kind";
-      an action has id, label, module, enabled, comment, flags (each with
-      name, enabled, parameterized), params (each with name, value,
-      parameterized), and loop_ids (ids of loops it belongs to); a loop has
-      id, condition, and item_ids
-    - data: data items, each with prompt, value, and intermediate
-    - condition_ids: ids of if-else items (parsed only to be reported)
+    - items: actions, loops, and if-else conditions ordered by item id,
+      distinguished by "kind"; an action has id, label, module, enabled,
+      comment, flags (each with name, enabled, parameterized), params (each
+      with name, value, parameterized), loop_ids (ids of loops it belongs
+      to), and condition_ids (ids of if-else conditions it belongs to); a
+      loop has id, condition, and item_ids; a condition has id, condition,
+      if_ids, and else_ids
 
     Raises ModelFileError when the file is not a valid model file.
     """
@@ -165,6 +168,7 @@ def parse_gxm(path):
                 "flags": flags,
                 "params": params,
                 "loop_ids": [],
+                "condition_ids": [],
             }
         )
 
@@ -184,7 +188,26 @@ def parse_gxm(path):
             }
         )
 
-    condition_ids = [int(node.get("id", -1)) for node in root.findall("if-else")]
+    for node in root.findall("if-else"):
+        branches = {"if": [], "else": []}
+        for branch, ids in branches.items():
+            branch_node = node.find(branch)
+            if branch_node is None:
+                continue
+            for item_node in branch_node.findall("item"):
+                try:
+                    ids.append(int(item_node.text))
+                except (TypeError, ValueError):
+                    pass
+        items.append(
+            {
+                "kind": "condition",
+                "id": int(node.get("id", -1)),
+                "condition": _legacy_unescape(_element_text(node, "condition")),
+                "if_ids": branches["if"],
+                "else_ids": branches["else"],
+            }
+        )
 
     # Ids define the execution order of the model (actions, loops, and
     # other items share one id sequence).
@@ -193,6 +216,13 @@ def parse_gxm(path):
         for item in items:
             if item["kind"] == "action" and item["id"] in loop["item_ids"]:
                 item["loop_ids"].append(loop["id"])
+    for condition in [item for item in items if item["kind"] == "condition"]:
+        for item in items:
+            if item["kind"] != "action":
+                continue
+            for branch_ids in (condition["if_ids"], condition["else_ids"]):
+                if item["id"] in branch_ids:
+                    item["condition_ids"].append(condition["id"])
 
     data = []
     for node in root.findall("data"):
@@ -212,7 +242,6 @@ def parse_gxm(path):
         "variables": variables,
         "items": items,
         "data": data,
-        "condition_ids": condition_ids,
     }
 
 
@@ -307,6 +336,54 @@ STANDARD_OPTIONS = {
 IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 
+class PythonReferences:
+    """Code expressions referencing generated-script options (python format)"""
+
+    @staticmethod
+    def value(name):
+        """Expression for a value which is exactly one reference"""
+        return 'options["{}"]'.format(name)
+
+    @staticmethod
+    def fstring_piece(name):
+        """Expression for a reference inside an f-string"""
+        return "{options['" + name + "']}"
+
+    @staticmethod
+    def parameterized(key, _param_name):
+        """Expression for the value of a parameterized option"""
+        return 'options["{}"]'.format(key)
+
+    flags_call = "get_parameterized_flags(options, [{}])"
+
+
+class PyWPSReferences:
+    """Code expressions referencing PyWPS request inputs (pywps format)"""
+
+    @staticmethod
+    def value(name):
+        """Expression for a value which is exactly one reference"""
+        return 'request.inputs["{}"][0].data'.format(name)
+
+    @staticmethod
+    def fstring_piece(name):
+        """Expression for a reference inside an f-string"""
+        return "{request.inputs['" + name + "'][0].data}"
+
+    @staticmethod
+    def parameterized(key, param_name):
+        """Expression for the value of a parameterized option.
+
+        Options with "input" in their name are ComplexInputs, so the
+        received file is referenced instead of the literal data (same
+        distinction as in the GUI PyWPS export).
+        """
+        attribute = "file" if "input" in param_name else "data"
+        return 'request.inputs["{}"][0].{}'.format(key, attribute)
+
+    flags_call = "get_parameterized_flags(request.inputs, [{}])"
+
+
 def model_actions(model):
     """Get all action items of the model in execution order"""
     return [item for item in model["items"] if item["kind"] == "action"]
@@ -380,33 +457,33 @@ def split_references(value, names):
     return parts
 
 
-def reference_code(name, loop_variable):
+def reference_code(name, loop_variable, refs):
     """Get the Python expression for a variable reference"""
     if name == loop_variable:
         return name
-    return 'options["{}"]'.format(name)
+    return refs.value(name)
 
 
-def value_expression(value, iface_param, variable_names, loop_variable):
+def value_expression(value, iface_param, variable_names, loop_variable, refs):
     """Get the Python expression for an option value, or None to omit it.
 
-    Model variable references become options lookups, loop variable
-    references become the loop variable, and values mixing references
-    with text become f-strings.
+    Model variable references become lookups in the refs style, loop
+    variable references become the loop variable, and values mixing
+    references with text become f-strings.
     """
     names = list(variable_names)
     if loop_variable:
         names.append(loop_variable)
     parts = split_references(value, names)
-    refs = [part for kind, part in parts if kind == "ref"]
-    if not refs:
+    references = [part for kind, part in parts if kind == "ref"]
+    if not references:
         if not value:
             return None
         if iface_param.get("type") in {"integer", "float"} and is_number(value):
             return value
         return string_literal(value)
     if len(parts) == 1:
-        return reference_code(refs[0], loop_variable)
+        return reference_code(references[0], loop_variable, refs)
     pieces = []
     for kind, part in parts:
         if kind == "text":
@@ -419,11 +496,11 @@ def value_expression(value, iface_param, variable_names, loop_variable):
         elif part == loop_variable:
             pieces.append("{" + part + "}")
         else:
-            pieces.append("{options['" + part + "']}")
+            pieces.append(refs.fstring_piece(part))
     return 'f"' + "".join(pieces) + '"'
 
 
-def action_arguments(action, iface, variable_names, loop_variable):
+def action_arguments(action, iface, variable_names, loop_variable, refs):
     """Build run_command argument strings for one action.
 
     Returns the list of argument code strings; the flags argument for
@@ -453,26 +530,21 @@ def action_arguments(action, iface, variable_names, loop_variable):
             long_flag_args.append("{}=True".format(name))
 
     arguments = []
+    flags_call = refs.flags_call.format(", ".join(parameterized_flag_keys))
     if short_flags and parameterized_flag_keys:
-        arguments.append(
-            'flags="{}" + get_parameterized_flags(options, [{}])'.format(
-                short_flags, ", ".join(parameterized_flag_keys)
-            )
-        )
+        arguments.append('flags="{}" + {}'.format(short_flags, flags_call))
     elif short_flags:
         arguments.append('flags="{}"'.format(short_flags))
     elif parameterized_flag_keys:
-        arguments.append(
-            "flags=get_parameterized_flags(options, [{}])".format(
-                ", ".join(parameterized_flag_keys)
-            )
-        )
+        arguments.append("flags={}".format(flags_call))
     arguments.extend(long_flag_args)
 
     known_names = list(variable_names) + ([loop_variable] if loop_variable else [])
     for param in action["params"]:
         if param["parameterized"]:
-            expression = 'options["{}"]'.format(option_key(action, param["name"]))
+            expression = refs.parameterized(
+                option_key(action, param["name"]), param["name"]
+            )
         else:
             for kind, part in split_references(param["value"], known_names):
                 unresolved = find_unresolved_variable(part) if kind == "text" else None
@@ -493,6 +565,7 @@ def action_arguments(action, iface, variable_names, loop_variable):
                 iface.get_param(param["name"], raiseError=False) or {},
                 variable_names,
                 loop_variable,
+                refs,
             )
         if expression is not None:
             arguments.append("{}={}".format(param["name"], expression))
@@ -512,7 +585,7 @@ def render_call(function, module, arguments, indent):
     return lines
 
 
-def action_lines(action, iface, variable_names, indent, loop_variable=None):
+def action_lines(action, iface, variable_names, indent, refs, loop_variable=None):
     """Generate the code lines for one action.
 
     Disabled actions are included as commented-out code so that the
@@ -521,7 +594,7 @@ def action_lines(action, iface, variable_names, indent, loop_variable=None):
     lines = render_call(
         "run_command",
         action["module"],
-        action_arguments(action, iface, variable_names, loop_variable),
+        action_arguments(action, iface, variable_names, loop_variable, refs),
         indent,
     )
     if not action["enabled"]:
@@ -551,7 +624,7 @@ def loop_reference_check(loop, variable_names):
         )
 
 
-def loop_lines(loop, model, interfaces, variable_names):
+def loop_lines(loop, model, interfaces, variable_names, refs, indent):
     """Generate the code lines for one loop and its actions.
 
     Returns (lines, uses_read_command) where uses_read_command tells the
@@ -597,18 +670,98 @@ def loop_lines(loop, model, interfaces, variable_names):
                 ).format(condition=loop["condition"], id=loop["id"])
             )
         iterable_code = iterable_text
-    lines = ["    for {} in {}:".format(variable, iterable_code)]
+    lines = ["{}for {} in {}:".format(" " * indent, variable, iterable_code)]
+    has_enabled_action = False
     for action in model_actions(model):
         if loop["id"] not in action["loop_ids"]:
             continue
         iface = get_interface(action["module"], interfaces)
         lines.extend(
-            action_lines(action, iface, variable_names, 8, loop_variable=variable)
+            action_lines(
+                action, iface, variable_names, indent + 4, refs, loop_variable=variable
+            )
         )
         lines.append("")
+        has_enabled_action = has_enabled_action or action["enabled"]
     if lines[-1] == "":
         lines.pop()
+    if not has_enabled_action:
+        # Only comments (or nothing) in the loop body would be a syntax error.
+        lines.append("{}pass".format(" " * (indent + 4)))
     return lines, uses_read_command
+
+
+def condition_expression(condition, model, refs):
+    """Translate an if-else condition into a Python expression.
+
+    Model variable references become option lookups converted to the
+    variable's type. The GUI export substitutes the variable default
+    values as literals instead, which ignores the values given to the
+    generated interface at run time.
+    """
+    variables = model["variables"]
+    pieces = []
+    for kind, part in split_references(condition["condition"], list(variables)):
+        if kind == "text":
+            unresolved = find_unresolved_variable(part)
+            if unresolved:
+                gs.fatal(
+                    _(
+                        "Undefined variable <{variable}> in the condition"
+                        " of if-else ({id})"
+                    ).format(variable=unresolved, id=condition["id"])
+                )
+            pieces.append(part)
+            continue
+        code = refs.value(part)
+        variable_type = variables[part]["type"]
+        if variable_type == "integer":
+            code = "int({})".format(code)
+        elif variable_type == "float":
+            code = "float({})".format(code)
+        pieces.append(code)
+    expression = "".join(pieces).strip()
+    try:
+        compile(expression, "<condition>", "eval")
+    except SyntaxError:
+        gs.fatal(
+            _(
+                "Condition <{condition}> of if-else ({id}) is not a valid"
+                " Python expression"
+            ).format(condition=condition["condition"], id=condition["id"])
+        )
+    return expression
+
+
+def condition_lines(condition, model, interfaces, variable_names, refs, indent):
+    """Generate the code lines for one if-else condition and its actions"""
+    lines = [
+        "{}if {}:".format(" " * indent, condition_expression(condition, model, refs))
+    ]
+    for keyword, branch_ids in (
+        ("if", condition["if_ids"]),
+        ("else", condition["else_ids"]),
+    ):
+        branch = []
+        has_enabled_action = False
+        for action in model_actions(model):
+            if action["id"] not in branch_ids:
+                continue
+            iface = get_interface(action["module"], interfaces)
+            branch.extend(action_lines(action, iface, variable_names, indent + 4, refs))
+            branch.append("")
+            has_enabled_action = has_enabled_action or action["enabled"]
+        if branch and branch[-1] == "":
+            branch.pop()
+        if keyword == "else" and not branch:
+            continue
+        if not has_enabled_action:
+            # Only comments (or nothing) in the branch would be a syntax error.
+            branch.append("{}pass".format(" " * (indent + 4)))
+        if keyword == "else":
+            lines.append("{}else:".format(" " * indent))
+        lines.extend(branch)
+    return lines
 
 
 def header_lines(model):
@@ -636,6 +789,28 @@ def header_lines(model):
     ]
 
 
+def flag_description(iface, action, name):
+    """Get the description of a flag from the tool interface"""
+    try:
+        info = iface.get_flag(name)
+    except ValueError:
+        info = {}
+    return (
+        info.get("label")
+        or info.get("description")
+        or "Flag {} of {}".format(name, action["module"])
+    )
+
+
+def param_description(info, action, name):
+    """Get the description of an option from its interface entry"""
+    return (
+        info.get("label")
+        or info.get("description")
+        or "Option {} of {}".format(name, action["module"])
+    )
+
+
 def parameterized_option_lines(model, interfaces):
     """Generate parser option definitions for parameterized options"""
     lines = []
@@ -647,15 +822,7 @@ def parameterized_option_lines(model, interfaces):
             if not flag["parameterized"] or len(flag["name"]) != 1:
                 continue
             iface = iface or get_interface(action["module"], interfaces)
-            try:
-                info = iface.get_flag(flag["name"])
-            except ValueError:
-                info = {}
-            description = (
-                info.get("label")
-                or info.get("description")
-                or "Flag {} of {}".format(flag["name"], action["module"])
-            )
+            description = flag_description(iface, action, flag["name"])
             lines.extend(
                 [
                     "# %option",
@@ -673,11 +840,7 @@ def parameterized_option_lines(model, interfaces):
                 continue
             iface = iface or get_interface(action["module"], interfaces)
             info = iface.get_param(param["name"], raiseError=False) or {}
-            description = (
-                info.get("label")
-                or info.get("description")
-                or "Option {} of {}".format(param["name"], action["module"])
-            )
+            description = param_description(info, action, param["name"])
             option_type = info.get("type", "string")
             if option_type == "float":
                 option_type = "double"
@@ -761,11 +924,44 @@ def cleanup_lines(model, variable_names):
     return lines
 
 
+def body_lines(model, interfaces, variable_names, refs, indent, action_extra=None):
+    """Generate the code lines for all model items in execution order.
+
+    Returns (lines, uses_read_command). When given, action_extra is
+    called as action_extra(action, indent) after each enabled action
+    outside of loops and conditions to add follow-up code lines (used
+    for the PyWPS output exports).
+    """
+    lines = []
+    uses_read_command = False
+    for item in model["items"]:
+        if item["kind"] == "action":
+            if item["loop_ids"] or item["condition_ids"]:
+                continue
+            iface = get_interface(item["module"], interfaces)
+            lines.extend(action_lines(item, iface, variable_names, indent, refs))
+            if action_extra and item["enabled"]:
+                lines.extend(action_extra(item, indent))
+            lines.append("")
+        elif item["kind"] == "loop":
+            loop_code, reads = loop_lines(
+                item, model, interfaces, variable_names, refs, indent
+            )
+            uses_read_command = uses_read_command or reads
+            lines.extend(loop_code)
+            lines.append("")
+        elif item["kind"] == "condition":
+            lines.extend(
+                condition_lines(item, model, interfaces, variable_names, refs, indent)
+            )
+            lines.append("")
+    return lines, uses_read_command
+
+
 def generate_python(model):
     """Generate the Python script text for a model"""
     interfaces = {}
     variable_names = list(model["variables"])
-    uses_read_command = False
     parameterized_flags_used = any(
         flag["parameterized"] and len(flag["name"]) == 1
         for action in model_actions(model)
@@ -773,19 +969,9 @@ def generate_python(model):
         for flag in action["flags"]
     )
 
-    body = []
-    for item in model["items"]:
-        if item["kind"] == "action":
-            if item["loop_ids"]:
-                continue
-            iface = get_interface(item["module"], interfaces)
-            body.extend(action_lines(item, iface, variable_names, 4))
-            body.append("")
-        elif item["kind"] == "loop":
-            loop_code, reads = loop_lines(item, model, interfaces, variable_names)
-            uses_read_command = uses_read_command or reads
-            body.extend(loop_code)
-            body.append("")
+    body, uses_read_command = body_lines(
+        model, interfaces, variable_names, PythonReferences, 4
+    )
     body.append("    return 0")
 
     lines = header_lines(model)
@@ -835,6 +1021,404 @@ def generate_python(model):
     return "\n".join(lines) + "\n"
 
 
+# Export commands for PyWPS process outputs by data type prompt
+# (command, format option value, file extension), as in the GUI export.
+PYWPS_EXPORTS = {
+    "raster": ("r.out.gdal", "GTiff", ".tif"),
+    "vector": ("v.out.ogr", "GML", ".gml"),
+}
+
+
+def pywps_format_expression(prompt):
+    """Get the pywps Format() expression for a data type prompt, or None"""
+    if prompt == "raster":
+        return 'Format("image/tif")'
+    if prompt == "vector":
+        return 'Format("application/gml+xml")'
+    return None
+
+
+def pywps_default(value, option_type):
+    """Get the Python literal for a PyWPS input default value"""
+    if option_type in {"integer", "float"} and is_number(value):
+        return value
+    return string_literal(value)
+
+
+def pywps_io_lines(collection, object_type, identifier, title, spec):
+    """Generate one inputs/outputs append statement of the PyWPS process"""
+    lines = [
+        "        {}.append({}(".format(collection, object_type),
+        "            identifier={},".format(string_literal(identifier)),
+        "            title={},".format(string_literal(title)),
+    ]
+    for position, entry in enumerate(spec):
+        suffix = "))" if position == len(spec) - 1 else ","
+        lines.append("            " + entry + suffix)
+    lines.append("")
+    return lines
+
+
+def generate_pywps(model):
+    """Generate the PyWPS process script text for a model.
+
+    The generated script has the same structure as the PyWPS export of
+    the GUI Graphical Modeler (a Process subclass with parameterized
+    options as inputs, new non-intermediate data as ComplexOutputs
+    exported by r.out.gdal/v.out.ogr, and a static handler running the
+    actions), with the deviations documented in the tool manual.
+    """
+    interfaces = {}
+    variables = model["variables"]
+    variable_names = list(variables)
+    properties = model["properties"]
+    intermediate_values = {
+        data["value"] for data in model["data"] if data["intermediate"]
+    }
+
+    input_lines = []
+    output_lines = []
+    # Action id to list of (option key, param, interface entry) to export.
+    exports = {}
+    parameterized_flags_used = False
+
+    for name, info in variables.items():
+        data_type = info["type"] if info["type"] in {"integer", "float"} else "string"
+        spec = ['data_type="{}"'.format(data_type)]
+        if info["value"]:
+            spec.append("default={}".format(pywps_default(info["value"], data_type)))
+        input_lines.extend(
+            pywps_io_lines(
+                "inputs", "LiteralInput", name, info["description"] or name, spec
+            )
+        )
+
+    for action in model_actions(model):
+        if not action["enabled"]:
+            continue
+        iface = get_interface(action["module"], interfaces)
+        for flag in action["flags"]:
+            if not flag["parameterized"] or len(flag["name"]) != 1:
+                continue
+            parameterized_flags_used = True
+            spec = [
+                'data_type="string"',
+                'default="{}"'.format("True" if flag["enabled"] else "False"),
+            ]
+            input_lines.extend(
+                pywps_io_lines(
+                    "inputs",
+                    "LiteralInput",
+                    option_key(action, flag["name"]),
+                    flag_description(iface, action, flag["name"]),
+                    spec,
+                )
+            )
+        for param in action["params"]:
+            info = iface.get_param(param["name"], raiseError=False) or {}
+            key = option_key(action, param["name"])
+            description = param_description(info, action, param["name"])
+            format_expression = pywps_format_expression(info.get("prompt"))
+            if param["parameterized"]:
+                if "input" in param["name"] and format_expression:
+                    object_type = "ComplexInput"
+                    spec = ["supported_formats=[{}]".format(format_expression)]
+                else:
+                    object_type = "LiteralInput"
+                    spec = ['data_type="{}"'.format(info.get("type", "string"))]
+                if param["value"] and "output" not in param["name"]:
+                    spec.append(
+                        "default={}".format(
+                            pywps_default(param["value"], info.get("type", "string"))
+                        )
+                    )
+                input_lines.extend(
+                    pywps_io_lines("inputs", object_type, key, description, spec)
+                )
+            if info.get("age") != "new":
+                continue
+            if not param["value"] and not param["parameterized"]:
+                continue
+            if param["value"] in intermediate_values:
+                continue
+            if action["loop_ids"] or action["condition_ids"]:
+                gs.warning(
+                    _(
+                        "Output <{option}> of action ({id}) {label} inside a"
+                        " loop or if-else condition is not exposed as a"
+                        " process output"
+                    ).format(
+                        option=param["name"], id=action["id"], label=action["label"]
+                    )
+                )
+                continue
+            if not format_expression:
+                gs.warning(
+                    _(
+                        "Output <{option}> of action ({id}) {label} is not"
+                        " exposed as a process output (data type <{prompt}>"
+                        " is not supported)"
+                    ).format(
+                        option=param["name"],
+                        id=action["id"],
+                        label=action["label"],
+                        prompt=info.get("prompt", ""),
+                    )
+                )
+                continue
+            output_lines.extend(
+                pywps_io_lines(
+                    "outputs",
+                    "ComplexOutput",
+                    key,
+                    description,
+                    ["supported_formats=[{}]".format(format_expression)],
+                )
+            )
+            exports.setdefault(action["id"], []).append((key, param, info))
+
+    def action_extra(action, indent):
+        """Generate the output export code following one action"""
+        lines = []
+        for key, param, info in exports.get(action["id"], []):
+            command, format_name, extension = PYWPS_EXPORTS[info["prompt"]]
+            if param["parameterized"]:
+                expression = PyWPSReferences.parameterized(key, param["name"])
+            else:
+                expression = value_expression(
+                    param["value"], info, variable_names, None, PyWPSReferences
+                )
+            path = 'os.path.join(tempfile.gettempdir(), {} + "{}")'.format(
+                expression, extension
+            )
+            arguments = [
+                "input={}".format(expression),
+                "output={}".format(path),
+                'format="{}"'.format(format_name),
+            ]
+            if properties["overwrite"]:
+                arguments.append("overwrite=True")
+            lines.extend(render_call("run_command", command, arguments, indent))
+            lines.append(
+                '{}response.outputs["{}"].file = {}'.format(" " * indent, key, path)
+            )
+        return lines
+
+    body, uses_read_command = body_lines(
+        model, interfaces, variable_names, PyWPSReferences, 8, action_extra
+    )
+    name_literal = string_literal(properties["name"] or "model")
+
+    lines = ["#!/usr/bin/env python3", ""]
+    if exports:
+        lines.extend(["import os", "import tempfile", ""])
+    imported = ["run_command"]
+    if uses_read_command:
+        imported.insert(0, "read_command")
+    lines.extend(
+        [
+            "from grass.script import {}".format(", ".join(imported)),
+            "from pywps import Process, LiteralInput, ComplexInput, ComplexOutput, Format",
+            "",
+            "",
+            "class Model(Process):",
+            "    def __init__(self):",
+            "        inputs = []",
+            "        outputs = []",
+            "",
+        ]
+    )
+    lines.extend(input_lines)
+    lines.extend(output_lines)
+    lines.extend(
+        [
+            "        super(Model, self).__init__(",
+            "            self._handler,",
+            "            identifier={},".format(name_literal),
+            "            title={},".format(name_literal),
+            "            inputs=inputs,",
+            "            outputs=outputs,",
+            "            # here you could also specify the GRASS location, for example:",
+            '            # grass_location="EPSG:5514",',
+            "            abstract={},".format(
+                string_literal(properties["description"])
+            ),
+            '            version="1.0",',
+            "            store_supported=True,",
+            "            status_supported=True)",
+            "",
+            "    @staticmethod",
+            "    def _handler(request, response):",
+        ]
+    )
+    lines.extend(body)
+    lines.append("        return response")
+    if parameterized_flags_used:
+        lines.extend(
+            [
+                "",
+                "",
+                "def get_parameterized_flags(inputs, keys):",
+                '    """Collect enabled parameterized flag letters"""',
+                '    flags = ""',
+                "    for key in keys:",
+                '        if inputs[key][0].data == "True":',
+                '            flags += key.rsplit("_", 1)[1]',
+                "    return flags",
+            ]
+        )
+    lines.extend(
+        [
+            "",
+            "",
+            'if __name__ == "__main__":',
+            "    from pywps.app.Service import Service",
+            "",
+            "    processes = [Model()]",
+            "    application = Service(processes)",
+        ]
+    )
+    return "\n".join(lines) + "\n"
+
+
+def jinja_default_literal(value):
+    """Get the Jinja literal for a placeholder default value.
+
+    The GUI actinia export writes the default unquoted, which Jinja
+    evaluates as an undefined name for textual values; quoting makes it
+    a string literal.
+    """
+    if is_number(value):
+        return value
+    return '"{}"'.format(value.replace('"', '\\"'))
+
+
+def actinia_placeholder(name, default):
+    """Get the Jinja placeholder for a templated actinia value"""
+    if default:
+        return "{{{{ {}|default({}) }}}}".format(name, jinja_default_literal(default))
+    return "{{{{ {} }}}}".format(name)
+
+
+def generate_actinia(model):
+    """Generate the actinia process chain JSON text for a model.
+
+    The generated JSON has the same structure as the actinia export of
+    the GUI Graphical Modeler (a process chain with parameterized
+    options as Jinja placeholders, wrapped in a template when
+    placeholders are present), with the deviations documented in the
+    tool manual.
+    """
+    interfaces = {}
+    variables = model["variables"]
+    for item in model["items"]:
+        if item["kind"] == "loop":
+            gs.fatal(
+                _("Loop ({id}) cannot be exported to the actinia format").format(
+                    id=item["id"]
+                )
+            )
+        if item["kind"] == "condition":
+            gs.fatal(
+                _(
+                    "If-else condition ({id}) cannot be exported to the actinia format"
+                ).format(id=item["id"])
+            )
+
+    process_list = []
+    templated = False
+    for action in model_actions(model):
+        if not action["enabled"]:
+            gs.warning(
+                _(
+                    "Disabled action ({id}) {label} is not included in the"
+                    " actinia process chain"
+                ).format(id=action["id"], label=action["label"])
+            )
+            continue
+        iface = get_interface(action["module"], interfaces)
+        flags = ""
+        for flag in action["flags"]:
+            if flag["parameterized"]:
+                gs.warning(
+                    _(
+                        "Parameterized flag <{flag}> of action ({id}) {label}"
+                        " is exported with its current state (actinia does"
+                        " not support parameterized flags)"
+                    ).format(flag=flag["name"], id=action["id"], label=action["label"])
+                )
+            if not flag["enabled"]:
+                continue
+            if len(flag["name"]) == 1:
+                flags += flag["name"]
+            else:
+                gs.warning(
+                    _(
+                        "Flag <{flag}> of action ({id}) {label} has no"
+                        " actinia equivalent and is skipped"
+                    ).format(flag=flag["name"], id=action["id"], label=action["label"])
+                )
+        entry = {"module": action["module"], "id": action_nickname(action)}
+        if flags:
+            entry["flags"] = flags
+        inputs = []
+        outputs = []
+        for param in action["params"]:
+            if param["parameterized"]:
+                templated = True
+                value = actinia_placeholder(
+                    option_key(action, param["name"]), param["value"]
+                )
+            elif param["value"]:
+                pieces = []
+                for kind, part in split_references(param["value"], list(variables)):
+                    if kind == "text":
+                        unresolved = find_unresolved_variable(part)
+                        if unresolved:
+                            gs.fatal(
+                                _(
+                                    "Undefined variable <{variable}> in option"
+                                    " <{option}> of action ({id}) {label}"
+                                ).format(
+                                    variable=unresolved,
+                                    option=param["name"],
+                                    id=action["id"],
+                                    label=action["label"],
+                                )
+                            )
+                        pieces.append(part)
+                    else:
+                        templated = True
+                        pieces.append(
+                            actinia_placeholder(part, variables[part]["value"])
+                        )
+                value = "".join(pieces)
+            else:
+                continue
+            info = iface.get_param(param["name"], raiseError=False) or {}
+            record = {"param": param["name"], "value": value}
+            if info.get("age") == "new":
+                outputs.append(record)
+            else:
+                inputs.append(record)
+        if inputs:
+            entry["inputs"] = inputs
+        if outputs:
+            entry["outputs"] = outputs
+        process_list.append(entry)
+
+    chain = {
+        "id": "model",
+        "description": model["properties"]["description"],
+        "version": "1",
+    }
+    if templated:
+        chain["template"] = {"list": process_list}
+    else:
+        chain["list"] = process_list
+    return json.dumps(chain, indent=2) + "\n"
+
+
 def main():
     options, flags = gs.parser()
     try:
@@ -846,19 +1430,12 @@ def main():
             )
         )
 
-    if model["condition_ids"]:
-        gs.fatal(
-            _(
-                "The model contains if-else condition item(s) (id(s): {ids})"
-                " which are not supported by this tool"
-            ).format(ids=", ".join(str(i) for i in model["condition_ids"]))
-        )
     for action in model_actions(model):
-        if len(action["loop_ids"]) > 1:
+        if len(action["loop_ids"]) + len(action["condition_ids"]) > 1:
             gs.fatal(
                 _(
-                    "Action ({id}) {label} belongs to more than one loop;"
-                    " nested loops are not supported"
+                    "Action ({id}) {label} belongs to more than one loop or"
+                    " if-else condition; nested blocks are not supported"
                 ).format(id=action["id"], label=action["label"])
             )
 
@@ -868,17 +1445,21 @@ def main():
             _("File <{}> already exists. Use --overwrite to replace it.").format(output)
         )
 
-    # The format option accepts only "python" for now; the parser rejects
-    # other values.
-    script = generate_python(model)
+    generators = {
+        "python": generate_python,
+        "pywps": generate_pywps,
+        "actinia": generate_actinia,
+    }
+    script = generators[options["format"]](model)
     try:
         output.write_text(script, encoding="utf-8")
     except OSError as error:
         gs.fatal(
             _("Unable to write <{name}>: {error}").format(name=output, error=error)
         )
-    # Make the script executable for the owner (it starts with a shebang).
-    output.chmod(output.stat().st_mode | stat.S_IXUSR)
+    if options["format"] != "actinia":
+        # Make the script executable for the owner (it starts with a shebang).
+        output.chmod(output.stat().st_mode | stat.S_IXUSR)
     return 0
 
 
