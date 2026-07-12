@@ -43,6 +43,7 @@ SUBDIRS = \
 	r.in.aster \
 	r.in.srtm \
 	r.in.wms \
+	r.li.config \
 	r.mapcalc.simple \
 	r.mask \
 	r.out.xyz \
