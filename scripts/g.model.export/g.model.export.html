@@ -1,0 +1,101 @@
+<h2>DESCRIPTION</h2>
+
+<em>g.model.export</em> converts a model created in the wxGUI
+Graphical Modeler (<em>g.gui.gmodeler</em>) and stored in a GRASS
+Model file (<code>.gxm</code>) into a runnable script. The only
+<b>format</b> currently supported is <code>python</code>: a Python
+script with a GRASS parser interface which runs the model actions with
+<code>grass.script.run_command</code>, equivalent to the
+<em>Python</em> export of the Graphical Modeler.
+
+<p>
+Model variables and options marked as parameterized in the model
+become options of the generated script. A parameterized option of an
+action is named after the action and the option (e.g., the
+parameterized <b>color</b> option of an <em>r.colors</em> action with
+id 7 becomes <code>rcolors7_color</code>); variables keep their names.
+Default values from the model become the option defaults.
+Parameterized flags become <code>True</code>/<code>False</code>
+options of the script.
+
+<p>
+Data marked as intermediate in the model is removed by a
+<code>cleanup()</code> function registered to run at the end of the
+generated script.
+
+<h2>NOTES</h2>
+
+Coverage of the <code>.gxm</code> format:
+
+<ul>
+<li>Variables: supported; references in option values become option
+lookups in the generated code, with values mixing text and references
+translated to f-strings.</li>
+<li>Parameterized options and flags: supported. Parameterized long
+flags (e.g., <code>overwrite</code>) are not representable in the
+generated interface and are exported as fixed flags with a
+warning.</li>
+<li>Loops: supported for both condition forms the Graphical Modeler
+writes: a list of values (translated to a Python <code>for</code>
+statement) and a command in backticks (translated to iteration over
+<code>read_command(...).splitlines()</code>). Loop conditions
+referencing model variables are not supported and cause an error. An
+action belonging to more than one loop (nested loops) causes an
+error.</li>
+<li>If-else conditions: not supported; the tool ends with an error
+when the model contains an if-else item.</li>
+<li>Intermediate data: raster, vector, and 3D raster data items marked
+as intermediate are removed in <code>cleanup()</code>; names
+containing a variable reference cannot be resolved there and are
+listed in a comment instead.</li>
+<li>Actions disabled in the model are included as commented-out
+code.</li>
+<li>Layout-only elements (positions, sizes, comment items) are
+ignored.</li>
+</ul>
+
+The generated script is not byte-identical to the output of the
+Graphical Modeler's Python export, but it is equivalent: it has the
+same parser interface (option keys, types, and defaults) and runs the
+same commands. Unlike the GUI export, this tool skips (comments out)
+disabled actions instead of running them and exports loops.
+
+<p>
+The tool needs the interface descriptions of the tools used by the
+model, so those tools must be installed when exporting.
+
+<p>
+Export to PyWPS and actinia formats, which the Graphical Modeler also
+offers (<code>ModelToPyWPS</code> and <code>ModelToActinia</code> in
+<code>gui/wxpython/gmodeler/model_convert.py</code>), is future work
+for the <b>format</b> option.
+
+<p>
+The <code>.gxm</code> parsing code is duplicated in
+<em>g.model.run</em> because scripts install as standalone files. When
+porting these tools to the main source tree, the parser should move to
+a Python library location (e.g., a new <code>grass.models</code>
+package) which the GUI Graphical Modeler can use as well.
+
+<h2>EXAMPLES</h2>
+
+Convert a model to a Python script and run the script with one of its
+option defaults overridden:
+
+<div class="code"><pre>
+g.model.export input=zipcodes_avg_elevation.gxm output=avg_elevation.py
+python3 avg_elevation.py rcolors7_color=viridis
+</pre></div>
+
+<h2>SEE ALSO</h2>
+
+<em>
+<a href="g.gui.gmodeler.html">g.gui.gmodeler</a>,
+<a href="g.model.run.html">g.model.run</a>
+</em>
+
+<h2>AUTHORS</h2>
+
+Vaclav Petras, NC State University, Center for Geospatial Analytics,
+with substantial AI assistance<br>
+Based on the wxGUI Graphical Modeler by Martin Landa and Ondrej Pesek
