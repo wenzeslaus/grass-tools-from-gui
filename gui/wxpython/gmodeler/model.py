@@ -1291,12 +1291,13 @@ class WriteModelFile:
             self.indent += 4
             if "value" in values:
                 self.fd.write(
-                    "%s<value>%s</value>\n" % (" " * self.indent, values["value"])
+                    "%s<value>%s</value>\n"
+                    % (" " * self.indent, self._filterValue(values["value"]))
                 )
             if "description" in values:
                 self.fd.write(
                     "%s<description>%s</description>\n"
-                    % (" " * self.indent, values["description"])
+                    % (" " * self.indent, self._filterValue(values["description"]))
                 )
             self.indent -= 4
             self.fd.write("%s</variable>\n" % (" " * self.indent))
