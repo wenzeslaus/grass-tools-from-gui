@@ -1594,7 +1594,7 @@ class GMFrame(wx.Frame):
     def OnNewVector(self, event):
         """Create new vector map layer"""
         dlg = CreateNewVector(
-            self, giface=self._giface, cmd=(("v.edit", {"tool": "create"}, "map"))
+            self, giface=self._giface, cmd=(("v.create", {}, "output"))
         )
 
         if not dlg:

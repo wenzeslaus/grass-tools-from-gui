@@ -991,7 +991,7 @@ class VDigitToolbar(BaseToolbar):
                 self.parent,
                 exceptMap=openVectorMap,
                 giface=self._giface,
-                cmd=(("v.edit", {"tool": "create"}, "map")),
+                cmd=(("v.create", {}, "output")),
                 disableAdd=True,
             )
 

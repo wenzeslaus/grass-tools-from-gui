@@ -49,7 +49,6 @@ from gui_core.gselect import (
 )
 from gui_core.widgets import SingleSymbolPanel, SimpleValidator, MapValidator
 from core.settings import UserSettings
-from core.debug import Debug
 from core.utils import is_shell_running
 from gui_core.wrap import (
     Button,
@@ -465,6 +464,10 @@ def CreateNewVector(
     """
     vExternalOut = grass.parse_command("v.external.out", flags="g")
     isNative = vExternalOut["format"] == "native"
+    if cmd[0] == "v.create" and not isNative:
+        # v.create supports only the native format; for OGR output use
+        # v.edit which accepts a feature type.
+        cmd = ("v.edit", {"tool": "create"}, "map")
     showType = bool(cmd[0] == "v.edit" and not isNative)
     dlg = NewVectorDialog(
         parent,
@@ -501,6 +504,10 @@ def CreateNewVector(
     cmd[1][cmd[2]] = outmap
     if showType:
         cmd[1]["type"] = dlg.GetFeatureType()
+    if cmd[0] == "v.create" and dlg.table.IsEnabled() and dlg.table.IsChecked():
+        # Create a table containing only the key column together with the map.
+        cmd[1]["key"] = key
+        cmd[1]["flags"] = "t"
 
     curMapset = grass.gisenv()["MAPSET"]
     if isNative:
@@ -557,27 +564,6 @@ def CreateNewVector(
             input=vExternalOut["dsn"],
             layer=outmap,
         )
-
-    # create attribute table
-    if dlg.table.IsEnabled() and dlg.table.IsChecked():
-        if isNative:
-            sql = "CREATE TABLE %s (%s INTEGER)" % (outmap, key)
-
-            RunCommand("db.connect", flags="c")
-
-            Debug.msg(1, "SQL: %s" % sql)
-            RunCommand("db.execute", quiet=True, parent=parent, input="-", stdin=sql)
-
-            RunCommand(
-                "v.db.connect",
-                quiet=True,
-                parent=parent,
-                map=outmap,
-                table=outmap,
-                key=key,
-                layer="1",
-            )
-        # TODO: how to deal with attribute tables for OGR layers?
 
     # return fully qualified map name
     if "@" not in outmap:
