@@ -71,6 +71,33 @@
 # %option G_OPT_T_WHERE
 # %end
 
+# %option
+# % key: background
+# % type: string
+# % required: no
+# % multiple: no
+# % label: Display command(s) drawn below the series map in each frame
+# % description: One or more d.* commands separated by semicolons (e.g., "d.rast map=elevation_shade")
+# %end
+
+# %option
+# % key: overlay
+# % type: string
+# % required: no
+# % multiple: no
+# % label: Display command(s) drawn above the series map in each frame
+# % description: One or more d.* commands separated by semicolons (e.g., "d.vect map=roads; d.barscale at=1,5")
+# %end
+
+# %option
+# % key: legend
+# % type: string
+# % required: no
+# % multiple: no
+# % label: d.legend command drawing a raster legend on each frame
+# % description: The map of the current frame is used unless raster= is given (e.g., "d.legend at=5,50,2,5")
+# %end
+
 # %flag
 # % key: t
 # % description: Draw the time stamp of each map as a label on the frame
@@ -79,6 +106,7 @@
 import json
 import os
 import pathlib
+import shlex
 import shutil
 import sys
 
@@ -108,8 +136,87 @@ def get_maps(strds, where):
     return [(row["id"], row["start_time"], row["end_time"]) for row in data["data"]]
 
 
-def render_frames(map_ids, width, height, tmp_dir):
-    """Render each map with d.rast into a PNG file and return the file paths.
+def parse_display_commands(value, option_key):
+    """Parse semicolon-separated display commands into argument lists."""
+    commands = []
+    for command_text in value.split(";"):
+        command_text = command_text.strip()
+        if not command_text:
+            continue
+        try:
+            command = shlex.split(command_text)
+        except ValueError as error:
+            gs.fatal(
+                _("Cannot parse command <{cmd}> in option <{option}>: {error}").format(
+                    cmd=command_text, option=option_key, error=error
+                )
+            )
+        if not command[0].startswith("d."):
+            gs.fatal(
+                _(
+                    "Option <{option}> accepts only display commands (d.*), not <{cmd}>"
+                ).format(option=option_key, cmd=command[0])
+            )
+        commands.append(command)
+    return commands
+
+
+def parse_legend_command(value):
+    """Parse the legend option into a d.legend argument list."""
+    try:
+        command = shlex.split(value)
+    except ValueError as error:
+        gs.fatal(
+            _("Cannot parse option <{option}>: {error}").format(
+                option="legend", error=error
+            )
+        )
+    if not command or command[0] != "d.legend":
+        gs.fatal(
+            _("Option <{option}> must be a {tool} command, not <{value}>").format(
+                option="legend", tool="d.legend", value=value
+            )
+        )
+    return command
+
+
+def frame_commands(map_id, background, overlay, legend):
+    """Build the stack of display commands for the frame of one map.
+
+    The commands are ordered from bottom to top: background commands, the
+    series map itself, overlay commands, and the legend.
+    """
+    commands = [list(command) for command in background]
+    commands.append(["d.rast", f"map={map_id}", "--quiet"])
+    commands.extend(list(command) for command in overlay)
+    if legend:
+        command = list(legend)
+        if not any(arg.startswith("raster=") for arg in command[1:]):
+            command.append(f"raster={map_id}")
+        commands.append(command)
+    return commands
+
+
+def render_frame(commands, path, env):
+    """Run the display commands of one frame on top of each other.
+
+    The first command starts a new image file; the following commands draw
+    over the result of the previous ones (GRASS_RENDER_FILE_READ).
+    """
+    env["GRASS_RENDER_FILE"] = path
+    for i, command in enumerate(commands):
+        env["GRASS_RENDER_FILE_READ"] = "FALSE" if i == 0 else "TRUE"
+        try:
+            process = gs.Popen(command, env=env)
+        except OSError:
+            gs.fatal(_("Cannot find the command <{}>").format(command[0]))
+        returncode = process.wait()
+        if returncode != 0:
+            raise CalledModuleError(command[0], " ".join(command), returncode)
+
+
+def render_frames(command_stacks, width, height, tmp_dir):
+    """Render each frame command stack into a PNG file and return the paths.
 
     Rendering uses the current computation region. The cairo driver is used
     when available with the PNG driver as a fallback; for plain raster
@@ -118,27 +225,25 @@ def render_frames(map_ids, width, height, tmp_dir):
     env = os.environ.copy()
     env["GRASS_RENDER_WIDTH"] = str(width)
     env["GRASS_RENDER_HEIGHT"] = str(height)
-    env["GRASS_RENDER_FILE_READ"] = "FALSE"
     env["GRASS_RENDER_TRANSPARENT"] = "FALSE"
     driver = "cairo"
     frame_files = []
-    for i, map_id in enumerate(map_ids):
-        gs.percent(i, len(map_ids), 1)
+    for i, commands in enumerate(command_stacks):
+        gs.percent(i, len(command_stacks), 1)
         path = os.path.join(tmp_dir, f"frame_{i:04d}.png")
-        env["GRASS_RENDER_FILE"] = path
         env["GRASS_RENDER_IMMEDIATE"] = driver
         try:
-            gs.run_command("d.rast", map=map_id, env=env, quiet=True)
-        except CalledModuleError:
+            render_frame(commands, path, env)
+        except CalledModuleError as error:
             if driver != "cairo":
-                gs.fatal(_("Rendering of <{}> failed").format(map_id))
+                gs.fatal(_("Rendering with <{}> failed").format(error.code))
             driver = "png"
             env["GRASS_RENDER_IMMEDIATE"] = driver
             gs.warning(_("Cairo driver failed, falling back to the PNG driver"))
             try:
-                gs.run_command("d.rast", map=map_id, env=env, quiet=True)
-            except CalledModuleError:
-                gs.fatal(_("Rendering of <{}> failed").format(map_id))
+                render_frame(commands, path, env)
+            except CalledModuleError as error:
+                gs.fatal(_("Rendering with <{}> failed").format(error.code))
         frame_files.append(path)
     gs.percent(1, 1, 1)
     return frame_files
@@ -238,6 +343,10 @@ def main(options, flags):
     if output_format == "avi" and not shutil.which("ffmpeg"):
         gs.fatal(_("The ffmpeg tool is required for the avi format but was not found"))
 
+    background = parse_display_commands(options["background"], "background")
+    overlay = parse_display_commands(options["overlay"], "overlay")
+    legend = parse_legend_command(options["legend"]) if options["legend"] else None
+
     maps = get_maps(options["input"], options["where"])
     if not maps:
         gs.fatal(
@@ -250,7 +359,13 @@ def main(options, flags):
     try:
         gs.message(_("Rendering {} frames...").format(len(maps)))
         frame_files = render_frames(
-            [map_id for map_id, start, end in maps], width, height, tmp_dir
+            [
+                frame_commands(map_id, background, overlay, legend)
+                for map_id, start, end in maps
+            ],
+            width,
+            height,
+            tmp_dir,
         )
         if draw_time_labels:
             draw_labels(

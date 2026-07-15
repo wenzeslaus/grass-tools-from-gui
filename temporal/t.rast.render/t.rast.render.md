@@ -29,10 +29,35 @@ as a label near the bottom left corner of the frame. The **where** option
 limits the rendered maps with an SQL WHERE condition applied to the
 temporal database (e.g., `start_time >= '2020-01-01'`).
 
+Each frame can be composed of multiple layers. The **background** option
+takes one or more display commands (semicolon separated) rendered below
+the series map, so their output is visible where the series map has no
+data (e.g., a hillshade or country borders as context). The **overlay**
+option works the same way for commands rendered above the series map
+(e.g., *d.vect* overlays or *d.barscale*). Only display commands (tools
+with the `d.` prefix) are accepted, and the commands are the same for
+every frame.
+
+The **legend** option adds a raster legend to each frame. It takes a full
+*d.legend* command; when the command does not set the **raster** option,
+the series map of the current frame is used, so the legend follows the
+data of each frame. Set **raster** (or the *d.legend* **range** option)
+explicitly to keep the legend identical across frames.
+
 ## NOTES
 
 Frames are rendered with *d.rast* using the cairo display driver; when
 the cairo driver is not available, the tool falls back to the PNG driver.
+The layers of one frame are drawn into a single image in order
+(background commands, the series map, overlay commands, legend), so
+overlapping non-transparent output of a higher layer covers the layers
+below it.
+
+Commands in the **background** and **overlay** options are separated by
+semicolons and their arguments by whitespace; argument values containing
+spaces must be quoted within the command (e.g.,
+`overlay="d.vect map=roads where=\"type = 'primary'\""`), and a
+semicolon inside an argument value cannot be used.
 
 The gif and avi formats and the **-t** flag require the Python Imaging
 Library (Pillow). The avi format additionally requires `ffmpeg`. MP4
@@ -40,9 +65,14 @@ output is not supported directly; an MP4 video can be created from the
 frames format with `ffmpeg` (e.g.,
 `ffmpeg -r 5 -i basename_%03d.png output.mp4`).
 
-This tool deliberately covers only a single STRDS rendered with *d.rast*.
-Multi-layer composition, legends, and other decorations available in
-*g.gui.animation* are out of scope; render such frames with custom
+This tool covers a single STRDS rendered with *d.rast*, optionally
+combined with background and overlay display commands and a legend as
+described above. The 3D view animation of *g.gui.animation* (rendering
+with *m.nviz.image*) remains out of scope: it requires an OpenGL
+rendering context, which is not available in the headless environments
+this tool targets and cannot be exercised by automated tests. Features
+beyond that (multiple animations side by side, image and free-text
+decorations) are also not covered; render such frames with custom
 scripting using the display tools instead.
 
 ## EXAMPLES
@@ -69,9 +99,19 @@ t.rast.render input=precipitation output=frames/precip format=frames \
     where="start_time >= '2020-01-01' and start_time < '2021-01-01'"
 ```
 
+Render precipitation over a hillshade with roads and a legend on top:
+
+```sh
+t.rast.render input=precipitation output=precipitation.gif \
+    background="d.rast map=elevation_shade" \
+    overlay="d.vect map=roads color=black; d.barscale at=1,5" \
+    legend="d.legend at=5,50,2,5 range=0,500"
+```
+
 ## SEE ALSO
 
-*[d.rast](d.rast.md),
+*[d.legend](d.legend.md),
+[d.rast](d.rast.md),
 [g.gui.animation](g.gui.animation.md),
 [r.out.mpeg](r.out.mpeg.md),
 [t.rast.colors](t.rast.colors.md),
