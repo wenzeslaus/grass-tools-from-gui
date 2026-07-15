@@ -72,7 +72,7 @@ class BaseModelConverter(ABC):
                 cond = "%sfor %s in " % (" " * self.indent, condVar)
                 if condText[0] == "`" and condText[-1] == "`":
                     task = GUI(show=None).ParseCommand(cmd=utils.split(condText[1:-1]))
-                    cond += "grass.read_command("
+                    cond += "read_command("
                     cond += (
                         self._getPythonActionCmd(
                             item,
@@ -116,6 +116,18 @@ class BaseModelConverter(ABC):
         self.fd.write("\n")
         if isinstance(item, ModelComment):
             self._writePythonComment(item)
+
+    def _usesReadCommand(self):
+        """Check whether any loop condition is a command in backticks,
+        which is exported as a read_command() call."""
+        for loop in self.model.GetItems(ModelLoop):
+            parts = re.split(r"\s* in \s*", loop.GetLabel())
+            if len(parts) < 2:
+                continue
+            condText = parts[1].strip()
+            if len(condText) > 1 and condText[0] == "`" and condText[-1] == "`":
+                return True
+        return False
 
     def _writePythonComment(self, item):
         """Write model comment to Python file"""
@@ -888,6 +900,8 @@ import atexit
 from grass.script import parser
 """
         )
+        if self._usesReadCommand():
+            self.fd.write("from grass.script import read_command\n")
         if self.grassAPI == "script":
             self.fd.write("from grass.script import run_command\n")
         elif self.grassAPI == "pygrass":
