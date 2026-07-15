@@ -14,20 +14,31 @@ The sample areas are selected with the **method** option:
 
 - **whole**: one sample area covering the whole sampling frame; the
   *r.li* tools write one result value to a text file.
-- **moving_window**: a rectangular moving window of **width** x
-  **height** cells; the *r.li* tools write an output raster map where
-  each cell holds the index computed from the window centered on it.
-- **units**: rectangular sample units of **width** x **height** cells
-  placed in the sampling frame; the *r.li* tools write one result value
-  per unit to a text file. The placement is controlled by
-  **distribution**: **random** places **count** non-overlapping units
-  at random (with a fixed seed, so the placement is reproducible),
-  **systematic_contiguous** fills the frame with a contiguous grid of
-  units.
+- **moving_window**: a moving window; the *r.li* tools write an output
+  raster map where each cell holds the index computed from the window
+  centered on it.
+- **units**: sample units placed in the sampling frame; the *r.li*
+  tools write one result value per unit to a text file. The placement
+  is controlled by **distribution**: **random** places **count**
+  non-overlapping units at random (with a fixed seed, so the placement
+  is reproducible), **systematic_contiguous** fills the frame with a
+  contiguous grid of units.
+- **vector**: one masked sample area per area of the vector map given
+  by the **vector** option; the *r.li* tools write one result value
+  per area to a text file (see the NOTES section).
+
+With **method=moving_window** and **method=units**, the sample area is
+either a rectangle of **width** x **height** cells (**shape=rectangle**,
+the default) or a circle with the given **radius** in map units
+(**shape=circle**). For a circle, *r.li.config* creates a binary
+circular mask raster map named by the **mask** option with *r.circle*
+(see the NOTES section).
 
 The generated file uses the same format as *g.gui.rlisetup*: a
-`SAMPLINGFRAME` line followed by a `SAMPLEAREA` line and, for sample
-units and moving window, a line with the placement (`MOVINGWINDOW`,
+`SAMPLINGFRAME` line followed by the sample area lines (`SAMPLEAREA`,
+`MASKEDSAMPLEAREA` for circles, or `MASKEDOVERLAYAREA` with `RASTERMAP`
+and `VECTORMAP` for vector sampling) and, for sample units and moving
+window, a line with the placement (`MOVINGWINDOW`,
 `RANDOMNONOVERLAPPING n`, or `SYSTEMATICCONTIGUOUS`). All positions and
 sizes are stored relative to the reference raster map given by the
 **raster** option (see the NOTES section).
@@ -51,12 +62,26 @@ fractions against the current computation region at analysis time. For
 meaningful results, run the *r.li* tools with the computation region
 set to match the reference raster map (`g.region raster=...`).
 
-Circular sample areas offered by the *g.gui.rlisetup* wizard are not
-supported: the masked sample areas they are based on do not work
-reliably in *r.li.daemon* (results depend on the process environment
-and configurations combining them with moving window or sample unit
-placement fail). Sampling based on vector maps or interactively drawn
-regions is also not covered; use *g.gui.rlisetup* for those.
+With **shape=circle**, the circle mask raster map is created in the
+box of the rounded circle diameter (in cells, increased to the next
+odd number) at the north-west corner of the sampling frame, the same
+way *g.gui.rlisetup* creates it. *r.li.daemon* reads sample area masks
+at the absolute position of each sample area, so only moving window
+positions or sample units overlapping this box produce values; all
+other sample areas give NULL results. Unlike *g.gui.rlisetup*, which
+creates the circle mask for keyboard-defined sample units but omits it
+from the configuration file (so the circle has no effect there),
+*r.li.config* always writes the mask into a `MASKEDSAMPLEAREA` line.
+
+With **method=vector**, every area category of **vector** (in
+**layer**) becomes one sample area: the area is converted to a raster
+mask named `<raster>_<vector>_<category>` covering the bounding box of
+the area aligned to the reference raster, like *g.gui.rlisetup* does
+with all areas of a vector map. Cells of the bounding box outside the
+area are masked out in the analysis. The configuration file records
+the reference raster name, and the *r.li* tools accept only that exact
+name as their input map. Sampling based on interactively drawn regions
+is not covered; use *g.gui.rlisetup* for that.
 
 ## EXAMPLES
 
@@ -106,10 +131,29 @@ r.li.config raster=landclass96 output=grid20 \
 r.li.patchdensity input=landclass96 config=grid20 output=patchdensity_grid
 ```
 
+A circular moving window with a radius of 100 meters; the circle mask
+raster map `circle100` is created by *r.li.config*:
+
+```sh
+r.li.config raster=landclass96 output=circle100_window \
+    method=moving_window shape=circle radius=100 mask=circle100
+r.li.patchdensity input=landclass96 config=circle100_window \
+    output=patchdensity_circle
+```
+
+One masked sample area per area of a vector map, one result per area:
+
+```sh
+r.li.config raster=landclass96 output=zones \
+    method=vector vector=urbanarea
+r.li.patchdensity input=landclass96 config=zones output=patchdensity_zones
+```
+
 ## SEE ALSO
 
-*[g.gui.rlisetup](g.gui.rlisetup.md), [r.li](r.li.md),
-[r.li.daemon](r.li.daemon.md), [r.li.patchdensity](r.li.patchdensity.md)*
+*[g.gui.rlisetup](g.gui.rlisetup.md), [r.circle](r.circle.md),
+[r.li](r.li.md), [r.li.daemon](r.li.daemon.md),
+[r.li.patchdensity](r.li.patchdensity.md), [v.to.rast](v.to.rast.md)*
 
 ## AUTHORS
 

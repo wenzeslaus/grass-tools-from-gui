@@ -81,10 +81,20 @@
 # % key: method
 # % type: string
 # % required: yes
-# % options: whole,moving_window,units
+# % options: whole,moving_window,units,vector
 # % answer: whole
 # % description: Sampling method
-# % descriptions: whole;One sample area covering the whole sampling frame;moving_window;Moving window analysis producing an output raster map;units;Rectangular sample units placed in the sampling frame
+# % descriptions: whole;One sample area covering the whole sampling frame;moving_window;Moving window analysis producing an output raster map;units;Sample units placed in the sampling frame;vector;Masked sample areas from the areas of a vector map
+# % guisection: Sample areas
+# %end
+# %option
+# % key: shape
+# % type: string
+# % required: no
+# % options: rectangle,circle
+# % answer: rectangle
+# % description: Shape of the moving window or sample units (with method=moving_window or method=units)
+# % descriptions: rectangle;Rectangle of width x height cells;circle;Circle with the given radius
 # % guisection: Sample areas
 # %end
 # %option
@@ -115,6 +125,29 @@
 # % type: integer
 # % required: no
 # % description: Number of sample units to place (with distribution=random)
+# % guisection: Sample areas
+# %end
+# %option
+# % key: radius
+# % type: double
+# % required: no
+# % description: Radius of the circular sample area in map units (with shape=circle)
+# % guisection: Sample areas
+# %end
+# %option G_OPT_R_OUTPUT
+# % key: mask
+# % required: no
+# % description: Name for the circle mask raster map to create (with shape=circle)
+# % guisection: Sample areas
+# %end
+# %option G_OPT_V_INPUT
+# % key: vector
+# % required: no
+# % label: Vector map with areas used as sample areas (with method=vector)
+# % description: One mask raster map named <raster>_<vector>_<category> is created per area
+# % guisection: Sample areas
+# %end
+# %option G_OPT_V_FIELD
 # % guisection: Sample areas
 # %end
 
@@ -217,6 +250,152 @@ def sample_size(options, sf_rl, sf_cl):
     return width, height
 
 
+def circle_size(options, info, sf_rl, sf_cl):
+    """Validate and return the bounding box of the circle in cells.
+
+    Replicates RLIWizard._value_for_circle in
+    gui/wxpython/rlisetup/wizard.py: the box is the rounded diameter in
+    cells, increased to the next odd number. The wizard derives the row
+    count from the east-west resolution and the column count from the
+    north-south resolution; this is kept for byte-identical output (the
+    values are equal for square cells).
+    """
+    required_for(options, ["radius", "mask"], "shape=circle")
+    radius = float(options["radius"])
+    if radius <= 0:
+        gs.fatal(_("Option <radius> must be positive"))
+    cir_rl = round((2 * radius) / info["ewres"])
+    cir_cl = round((2 * radius) / info["nsres"])
+    if not cir_rl % 2:
+        cir_rl += 1
+    if not cir_cl % 2:
+        cir_cl += 1
+    if cir_rl > sf_rl or cir_cl > sf_cl:
+        gs.fatal(_("The circle is larger than the sampling frame"))
+    return cir_rl, cir_cl
+
+
+def create_circle_mask(options, info, sf_x, sf_y, cir_rl, cir_cl):
+    """Create the circular mask raster map like RLIWizard._circle.
+
+    The mask is a binary r.circle raster covering the bounding box of
+    the circle at the north-west corner of the sampling frame, with the
+    circle centered in the box. r.li.daemon reads sample area masks at
+    the absolute position of the mask raster (see the NOTES in the
+    documentation for the consequences).
+    """
+    sf_n = info["north"] - sf_y * info["nsres"]
+    sf_w = info["west"] + sf_x * info["ewres"]
+    # The row count with the east-west resolution and the column count
+    # with the north-south resolution replicate RLIWizard._circle.
+    east_edge = sf_w + cir_rl * info["ewres"]
+    south_edge = sf_n - cir_cl * info["nsres"]
+    gs.use_temp_region()
+    try:
+        # Resolution of the reference raster, extent of the circle box.
+        gs.run_command("g.region", raster=options["raster"], quiet=True)
+        gs.run_command(
+            "g.region", n=sf_n, s=south_edge, e=east_edge, w=sf_w, quiet=True
+        )
+        center = gs.region(complete=True)
+        gs.run_command(
+            "r.circle",
+            flags="b",
+            output=options["mask"],
+            max=options["radius"],
+            coordinates=(center["center_easting"], center["center_northing"]),
+            quiet=True,
+        )
+    finally:
+        gs.del_temp_region()
+
+
+def vector_areas(options, info):
+    """Compute MASKEDOVERLAYAREA lines from the areas of a vector map.
+
+    Replicates sampleAreaVector and convertFeature in
+    gui/wxpython/rlisetup/functions.py: each area category is converted
+    to a raster mask covering the bounding box of the area aligned to
+    the reference raster, and one MASKEDOVERLAYAREA line per mask is
+    followed by the RASTERMAP and VECTORMAP lines.
+    """
+    vector = options["vector"]
+    layer = options["layer"]
+    raster = options["raster"]
+    try:
+        cats_text = gs.read_command(
+            "v.category",
+            input=vector,
+            layer=layer,
+            option="print",
+            type="centroid",
+            quiet=True,
+        )
+    except CalledModuleError:
+        gs.fatal(_("Vector map <{}> not found").format(vector))
+    cats = sorted(
+        {int(cat) for line in cats_text.splitlines() for cat in line.split("/")}
+    )
+    if not cats:
+        gs.fatal(
+            _("Vector map <{vector}> has no areas in layer <{layer}>").format(
+                vector=vector, layer=layer
+            )
+        )
+    lines = []
+    prefix = "{rast}_{vect}_".format(
+        rast=raster.split("@")[0], vect=vector.split("@")[0]
+    )
+    gs.use_temp_region()
+    try:
+        for cat in cats:
+            mask_name = f"{prefix}{cat}"
+            tmp_vector = f"tmp_{mask_name}"
+            gs.run_command(
+                "v.extract",
+                input=vector,
+                cats=cat,
+                type="area",
+                layer=layer,
+                output=tmp_vector,
+                flags="d",
+                quiet=True,
+            )
+            # Bounding box of the area aligned to the reference raster.
+            gs.run_command("g.region", raster=raster, quiet=True)
+            gs.run_command("g.region", vector=tmp_vector, quiet=True)
+            gs.run_command("g.region", align=raster, quiet=True)
+            gs.run_command(
+                "v.to.rast",
+                input=tmp_vector,
+                type="area",
+                layer=layer,
+                use="value",
+                value=cat,
+                output=mask_name,
+                quiet=True,
+            )
+            gs.run_command(
+                "g.remove", flags="f", type="vector", name=tmp_vector, quiet=True
+            )
+            region = gs.region()
+            lines.append(
+                "MASKEDOVERLAYAREA {name}|{n}|{s}|{e}|{w}".format(
+                    name=mask_name,
+                    n=region["n"],
+                    s=region["s"],
+                    e=region["e"],
+                    w=region["w"],
+                )
+            )
+    finally:
+        gs.del_temp_region()
+    # r.li.daemon compares the RASTERMAP value with the input raster
+    # name given to the r.li tool, so the names must match exactly.
+    lines.extend([f"RASTERMAP {raster}", f"VECTORMAP {vector}"])
+    return lines
+
+
 def compute_areas(options, info, sf_x, sf_y, sf_rl, sf_cl):
     """Compute the sample area lines of the configuration file"""
     rows = int(info["rows"])
@@ -224,16 +403,34 @@ def compute_areas(options, info, sf_x, sf_y, sf_rl, sf_cl):
     method = options["method"]
     if method != "units":
         rejected_for(options, ["distribution", "count"], f"method={method}")
+    if method != "vector":
+        rejected_for(options, ["vector"], f"method={method}")
+    if options["shape"] == "circle" and method not in {"moving_window", "units"}:
+        gs.fatal(_("Option shape=circle requires method=moving_window or method=units"))
     if method == "whole":
-        rejected_for(options, ["width", "height"], "method=whole")
+        rejected_for(options, ["width", "height", "radius", "mask"], "method=whole")
         return [
             (
                 f"SAMPLEAREA {sf_x / cols!r}|{sf_y / rows!r}"
                 f"|{sf_rl / rows!r}|{sf_cl / cols!r}"
             )
         ]
-    width, height = sample_size(options, sf_rl, sf_cl)
-    area = f"SAMPLEAREA -1|-1|{height / rows!r}|{width / cols!r}"
+    if method == "vector":
+        rejected_for(options, ["width", "height", "radius", "mask"], "method=vector")
+        required_for(options, ["vector"], "method=vector")
+        return vector_areas(options, info)
+    if options["shape"] == "circle":
+        rejected_for(options, ["width", "height"], "shape=circle")
+        unit_rl, unit_cl = circle_size(options, info, sf_rl, sf_cl)
+        create_circle_mask(options, info, sf_x, sf_y, unit_rl, unit_cl)
+        area = (
+            f"MASKEDSAMPLEAREA -1|-1|{unit_rl / rows!r}|{unit_cl / cols!r}"
+            f"|{options['mask']}"
+        )
+    else:
+        rejected_for(options, ["radius", "mask"], "shape=rectangle")
+        unit_cl, unit_rl = sample_size(options, sf_rl, sf_cl)
+        area = f"SAMPLEAREA -1|-1|{unit_rl / rows!r}|{unit_cl / cols!r}"
     if method == "moving_window":
         return [area, "MOVINGWINDOW"]
     required_for(options, ["distribution"], "method=units")
@@ -243,7 +440,7 @@ def compute_areas(options, info, sf_x, sf_y, sf_rl, sf_cl):
     required_for(options, ["count"], "distribution=random")
     count = int(options["count"])
     # The same limit is enforced by r.li.daemon at runtime.
-    max_count = (sf_rl // height) * (sf_cl // width)
+    max_count = (sf_rl // unit_rl) * (sf_cl // unit_cl)
     if not 1 <= count <= max_count:
         gs.fatal(
             _(
@@ -267,17 +464,19 @@ def main():
     except CalledModuleError:
         gs.fatal(_("Raster map <{}> not found").format(raster))
 
-    frame_line, sf_x, sf_y, sf_rl, sf_cl = compute_frame(options, info)
-    area_lines = compute_areas(options, info, sf_x, sf_y, sf_rl, sf_cl)
-
     config_dir = rli_config_dir(os.environ)
     path = Path(config_dir) / output
+    # Check before computing the areas, which may create raster maps.
     if path.exists() and not gs.overwrite():
         gs.fatal(
             _(
                 "Configuration file <{}> already exists. Use --overwrite to replace it."
             ).format(path)
         )
+
+    frame_line, sf_x, sf_y, sf_rl, sf_cl = compute_frame(options, info)
+    area_lines = compute_areas(options, info, sf_x, sf_y, sf_rl, sf_cl)
+
     Path(config_dir).mkdir(exist_ok=True, parents=True)
     path.write_text("".join(line + "\n" for line in [frame_line, *area_lines]))
     gs.message(_("Configuration file <{}> created").format(path))
