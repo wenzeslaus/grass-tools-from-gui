@@ -54,6 +54,17 @@ int read_rast(double east, double north, double dist, int fd, int coords,
         cur_row = row;
     }
 
+    if (stats) {
+        if (outofbounds || Rast_is_d_null_value(&dcell[col]))
+            stats_add_null(stats);
+        else
+            stats_add_value(stats, dcell[col]);
+        /* In plain format, the -s flag replaces the points with the
+           statistics, so skip the point output. */
+        if (format == PLAIN)
+            return 0;
+    }
+
     switch (format) {
     case JSON:
         if (coords) {
