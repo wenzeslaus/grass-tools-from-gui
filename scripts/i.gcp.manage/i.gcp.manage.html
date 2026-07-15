@@ -1,11 +1,15 @@
 <h2>DESCRIPTION</h2>
 
 <em>i.gcp.manage</em> manages the ground control points (GCPs) of an
-imagery group without a graphical session. The points are stored in
-the POINTS file of the group and are the same points used by
+imagery group without a graphical session. By default, the points are
+stored in the POINTS file of the group and are the same points used by
 <em>g.gui.gcp</em>, <em>m.transform</em>, and <em>i.rectify</em>, so
 the tool can prepare, inspect, and adjust points for image
-rectification in scripts.
+rectification in scripts. With <b>points_file=control_points</b>, the
+tool manages the 3D points stored in the CONTROL_POINTS file of the
+group instead, which are the points used by
+<em>g.gui.image2target</em>, <em>i.ortho.transform</em>, and
+<em>i.ortho.rectify</em> in orthophoto workflows.
 
 <p>
 The <b>operation</b> option selects what to do:
@@ -13,12 +17,17 @@ The <b>operation</b> option selects what to do:
 <ul>
 <li><b>list</b> prints all points. In plain format, each line contains
 the point number, image east, image north, target east, target north,
-and status. JSON format (<b>format=json</b>) provides the same values
-as attributes.</li>
+and status. With <b>points_file=control_points</b>, the image height
+follows the image coordinates and the target height follows the
+target coordinates. JSON format (<b>format=json</b>) provides the same
+values as attributes.</li>
 <li><b>add</b> appends new active points. The
 <b>image_coordinates</b> and <b>target_coordinates</b> options each
 take one east,north pair per point and must contain the same number of
-pairs.</li>
+pairs. With <b>points_file=control_points</b>, the
+<b>image_heights</b> and <b>target_heights</b> options each take one
+value per point; when omitted, all heights are zero (the same default
+the wxGUI GCP managers use).</li>
 <li><b>remove</b> deletes the points given by the <b>points</b>
 option.</li>
 <li><b>enable</b> and <b>disable</b> set the status of the points
@@ -31,7 +40,10 @@ the transformation of the given <b>order</b>. In plain format, each
 line contains the point number, forward error, and backward error,
 followed by a final <code>total</code> line; inactive points are
 skipped. JSON format includes all points, with <code>null</code>
-errors for inactive points.</li>
+errors for inactive points. With <b>points_file=control_points</b>,
+the errors come from the camera model of <em>i.ortho.transform</em>
+instead of a polynomial transformation, so <b>order</b> does not
+apply.</li>
 </ul>
 
 <p>
@@ -43,13 +55,18 @@ calls must use the new numbers as reported by <b>operation=list</b>.
 <h2>NOTES</h2>
 
 The points are stored in the text file
-<code>$GISDBASE/$PROJECT/$MAPSET/group/&lt;group&gt;/POINTS</code>.
+<code>$GISDBASE/$PROJECT/$MAPSET/group/&lt;group&gt;/POINTS</code> (or
+<code>CONTROL_POINTS</code> with <b>points_file=control_points</b>).
 Comment lines start with <code>#</code>; every other line is one point
 given as image east, image north, target east, target north, and
-status (1 for used, 0 for ignored). <em>i.gcp.manage</em> writes the
-file in the exact format used by the GRASS imagery library, so the
-file stays interchangeable with <em>g.gui.gcp</em>,
-<em>m.transform</em>, and <em>i.rectify</em>.
+status (1 for used, 0 for ignored), with the image height inserted
+after the image coordinates and the target height after the target
+coordinates in the CONTROL_POINTS file. <em>i.gcp.manage</em> writes
+each file in the exact format used by the GRASS imagery library, so
+the files stay interchangeable with <em>g.gui.gcp</em>,
+<em>m.transform</em>, and <em>i.rectify</em> (POINTS) and with
+<em>g.gui.image2target</em>, <em>i.ortho.transform</em>, and
+<em>i.ortho.rectify</em> (CONTROL_POINTS).
 
 <p>
 The image coordinates are coordinates in the project (location) of the
@@ -69,11 +86,22 @@ or 10 active points respectively; with fewer active points,
 <em>i.rectify</em> has the same requirement.
 
 <p>
-The CONTROL_POINTS file used for 3D ground control points in
-orthophoto workflows (<em>g.gui.image2target</em>,
-<em>g.gui.photo2image</em>, <em>i.ortho.photo</em>) has a different
-format and is not supported; managing it is a possible future
-extension.
+With <b>points_file=control_points</b>, <b>operation=rms</b> runs
+<em>i.ortho.transform</em>, which additionally requires the reference
+points (REF_POINTS, created with <em>g.gui.photo2image</em>), a camera
+reference file (<em>i.ortho.camera</em>), and a target project
+(<em>i.ortho.target</em>) for the group. The camera model requires at
+least 4 active points; fewer are enough when an initial camera
+position has been created with <em>i.ortho.init</em>. Only the file
+management operations work without this orthophoto setup.
+
+<p>
+In the CONTROL_POINTS file, the image coordinates are coordinates of
+the source image (<em>i.ortho.transform</em> converts them to photo
+coordinates through the reference points), the image height is the
+elevation used by the forward transformation, and the target height is
+the elevation used by the backward transformation, matching the
+columns of the <em>g.gui.image2target</em> GCP list.
 
 <h2>EXAMPLES</h2>
 
@@ -107,11 +135,26 @@ i.gcp.manage group=scan operation=disable points=2
 i.gcp.manage group=scan operation=remove points=3
 </pre></div>
 
+Add two 3D points for orthorectification with target elevations 145
+and 152 (photo coordinates -75,-75 and 75,-75) and list them:
+
+<div class="code"><pre>
+i.gcp.manage group=scan operation=add points_file=control_points \
+    image_coordinates=-75,-75,75,-75 \
+    target_coordinates=635000,215000,637000,215000 \
+    target_heights=145,152
+i.gcp.manage group=scan operation=list points_file=control_points
+</pre></div>
+
 <h2>SEE ALSO</h2>
 
 <em>
 <a href="g.gui.gcp.html">g.gui.gcp</a>,
+<a href="g.gui.image2target.html">g.gui.image2target</a>,
+<a href="g.gui.photo2image.html">g.gui.photo2image</a>,
 <a href="i.group.html">i.group</a>,
+<a href="i.ortho.photo.html">i.ortho.photo</a>,
+<a href="i.ortho.transform.html">i.ortho.transform</a>,
 <a href="i.rectify.html">i.rectify</a>,
 <a href="i.target.html">i.target</a>,
 <a href="m.transform.html">m.transform</a>
