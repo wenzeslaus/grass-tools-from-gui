@@ -21,6 +21,7 @@
  *               for details.
  *
  *****************************************************************************/
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -36,13 +37,14 @@ int main(int argc, char **argv)
     struct Option *coords, *units, *frmt;
     struct Flag *shell;
 
-    double *x, *y;
+    double *x, *y, *bearing;
     double length, area, f, sq_f;
     int i, npoints;
     const char *units_name, *sq_units_name;
     enum OutputFormat format;
-    G_JSON_Value *root_value = NULL;
+    G_JSON_Value *root_value = NULL, *bearings_value = NULL;
     G_JSON_Object *root_object = NULL;
+    G_JSON_Array *bearings_array = NULL;
 
     /* Initialize the GIS calls */
     G_gisinit(argv[0]);
@@ -111,6 +113,7 @@ int main(int argc, char **argv)
         npoints++;
     x = G_malloc(npoints * sizeof(double));
     y = G_malloc(npoints * sizeof(double));
+    bearing = G_malloc((npoints - 1) * sizeof(double));
 
     for (i = 0; i < npoints; i++) {
         x[i] = atof(coords->answers[2 * i + 0]);
@@ -133,24 +136,49 @@ int main(int argc, char **argv)
 
     G_begin_distance_calculations();
     length = 0;
-    for (i = 1; i < npoints; i++)
+    for (i = 1; i < npoints; i++) {
         length += G_distance(x[i - 1], y[i - 1], x[i], y[i]);
+        /* Planar (grid) bearing of the segment in degrees clockwise from
+         * grid north, computed from coordinate differences even in
+         * latitude-longitude (libgis has no geodesic azimuth function). */
+        bearing[i - 1] = atan2(x[i] - x[i - 1], y[i] - y[i - 1]) * 180.0 / M_PI;
+        if (bearing[i - 1] < 0)
+            bearing[i - 1] += 360.0;
+    }
 
     switch (format) {
     case SHELL:
         printf("units=%s,%s\n", units_name, sq_units_name);
         /* length */
         printf("length=%.6f\n", f * length);
+        if (npoints > 1) {
+            printf("bearing=");
+            for (i = 0; i < npoints - 1; i++)
+                printf("%s%.6f", i > 0 ? "," : "", bearing[i]);
+            printf("\n");
+        }
         break;
 
     case PLAIN:
         printf("%-8s %10.6f %s\n", _("Length:"), f * length, units_name);
+        for (i = 0; i < npoints - 1; i++)
+            printf("%-8s %10.6f %s\n", _("Bearing:"), bearing[i], _("degrees"));
         break;
 
     case JSON:
         G_json_object_dotset_string(root_object, "units.length", units_name);
         G_json_object_dotset_string(root_object, "units.area", sq_units_name);
+        G_json_object_dotset_string(root_object, "units.bearing", _("degrees"));
         G_json_object_set_number(root_object, "length", f * length);
+        bearings_value = G_json_value_init_array();
+        if (bearings_value == NULL) {
+            G_json_value_free(root_value);
+            G_fatal_error(_("Failed to initialize JSON array. Out of memory?"));
+        }
+        bearings_array = G_json_array(bearings_value);
+        for (i = 0; i < npoints - 1; i++)
+            G_json_array_append_number(bearings_array, bearing[i]);
+        G_json_object_set_value(root_object, "bearings", bearings_value);
         break;
     }
 
