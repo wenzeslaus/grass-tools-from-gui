@@ -649,7 +649,9 @@ class Model:
 
         # parametrization
         params = self.Parameterize()
-        delInterData = False
+        # delete intermediate data unless unchecked in the parameters
+        # dialog (shown only for parameterized models)
+        delInterData = True
         if params:
             dlg = ModelParamDialog(
                 parent=parent, model=self, params=params, giface=self._giface
@@ -751,14 +753,18 @@ class Model:
                         self.RunAction(item=action, params=params, log=log)
                 params["variables"]["params"].remove(varDict)
 
-        if delInterData:
-            self.DeleteIntermediateData(log)
-        # store run params
+        # store run params; intermediate data is deleted by the on-done
+        # handler when requested
         self._runParams = params
+        self._delInterData = delInterData
 
     def GetRunParams(self):
         """Get the models run parameters"""
         return getattr(self, "_runParams", None)
+
+    def GetDeleteIntermediateData(self):
+        """Get whether the last run requested intermediate data removal"""
+        return getattr(self, "_delInterData", False)
 
     def DeleteIntermediateData(self, log):
         """Delete intermediate data"""
