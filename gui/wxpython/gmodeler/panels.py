@@ -41,7 +41,7 @@ else:
     import wx.lib.flatnotebook as FN
 from wx.lib.newevent import NewEvent
 
-from core.gconsole import GConsole, EVT_CMD_RUN, EVT_CMD_DONE, EVT_CMD_PREPARE
+from core.gconsole import GConsole, EVT_CMD_RUN, EVT_CMD_DONE
 from core.debug import Debug
 from core.gcmd import GMessage, GException, GWarning, GError
 from core.settings import UserSettings
@@ -179,7 +179,6 @@ class ModelerPanel(wx.Panel, MainPageBase):
         self.Bind(EVT_CMD_RUN, self.OnCmdRun)
         # rewrite default method to avoid hiding progress bar
         self._gconsole.Bind(EVT_CMD_DONE, self.OnCmdDone)
-        self.Bind(EVT_CMD_PREPARE, self.OnCmdPrepare)
         self.Bind(EVT_MODEL_DONE, self.OnModelDone)
 
         self.notebook.AddPage(page=self.canvas, text=_("Model"), name="model")
@@ -297,13 +296,6 @@ class ModelerPanel(wx.Panel, MainPageBase):
         except IndexError:
             pass
 
-    def OnCmdPrepare(self, event):
-        """Prepare for running command"""
-        if not event.userData:
-            return
-
-        event.onPrepare(item=event.userData["item"], params=event.userData["params"])
-
     def OnCmdDone(self, event):
         """Command done (or aborted)"""
 
@@ -395,15 +387,10 @@ class ModelerPanel(wx.Panel, MainPageBase):
         """Computation finished"""
         self.SetStatusText("", 0)
 
-        # restore original files
-        if hasattr(self.model, "fileInput"):
-            for finput in self.model.fileInput:
-                data = self.model.fileInput[finput]
-                if not data:
-                    continue
-
-                Path(finput).write_text(data)
-            del self.model.fileInput
+        # remove temporary model file used by g.model.run
+        if hasattr(self.model, "runModelFile"):
+            try_remove(self.model.runModelFile)
+            del self.model.runModelFile
 
         # delete intermediate data
         self._deleteIntermediateData()
@@ -976,7 +963,7 @@ class ModelerPanel(wx.Panel, MainPageBase):
     def OnRunModel(self, event):
         """Run entire model"""
         self.start_time = time.time()
-        self.model.Run(self._gconsole, self.OnModelDone, parent=self)
+        self.model.Run(self._gconsole, parent=self)
 
     def OnExportImage(self, event):
         """Export model to image (default image)"""
