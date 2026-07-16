@@ -31,6 +31,30 @@
 
 enum OutputFormat { PLAIN, SHELL, JSON };
 
+/* Format a value for plain and shell output. Non-finite values (e.g.,
+ * NaN from G_distance() for out-of-range latitude-longitude
+ * coordinates) print as "nan" regardless of platform and sign. */
+static const char *format_value(char *buffer, size_t size, double value)
+{
+    if (isfinite(value))
+        snprintf(buffer, size, "%.6f", value);
+    else
+        snprintf(buffer, size, "nan");
+    return buffer;
+}
+
+/* Set a number in a JSON object, storing JSON null for non-finite
+ * values, which JSON cannot represent (parson would otherwise fail
+ * and silently omit the key). */
+static void set_number_or_null(G_JSON_Object *object, const char *name,
+                               double value)
+{
+    if (isfinite(value))
+        G_json_object_set_number(object, name, value);
+    else
+        G_json_object_set_null(object, name);
+}
+
 int main(int argc, char **argv)
 {
     struct GModule *module;
@@ -39,6 +63,7 @@ int main(int argc, char **argv)
 
     double *x, *y, *bearing;
     double length, area, f, sq_f;
+    char buffer[64];
     int i, npoints;
     const char *units_name, *sq_units_name;
     enum OutputFormat format;
@@ -150,34 +175,44 @@ int main(int argc, char **argv)
     case SHELL:
         printf("units=%s,%s\n", units_name, sq_units_name);
         /* length */
-        printf("length=%.6f\n", f * length);
+        printf("length=%s\n", format_value(buffer, sizeof(buffer), f * length));
         if (npoints > 1) {
             printf("bearing=");
             for (i = 0; i < npoints - 1; i++)
-                printf("%s%.6f", i > 0 ? "," : "", bearing[i]);
+                printf("%s%s", i > 0 ? "," : "",
+                       format_value(buffer, sizeof(buffer), bearing[i]));
             printf("\n");
         }
         break;
 
     case PLAIN:
-        printf("%-8s %10.6f %s\n", _("Length:"), f * length, units_name);
+        printf("%-8s %10s %s\n", _("Length:"),
+               format_value(buffer, sizeof(buffer), f * length), units_name);
         for (i = 0; i < npoints - 1; i++)
-            printf("%-8s %10.6f %s\n", _("Bearing:"), bearing[i], _("degrees"));
+            printf("%-8s %10s %s\n", _("Bearing:"),
+                   format_value(buffer, sizeof(buffer), bearing[i]),
+                   _("degrees"));
         break;
 
     case JSON:
         G_json_object_dotset_string(root_object, "units.length", units_name);
         G_json_object_dotset_string(root_object, "units.area", sq_units_name);
         G_json_object_dotset_string(root_object, "units.bearing", _("degrees"));
-        G_json_object_set_number(root_object, "length", f * length);
+        set_number_or_null(root_object, "length", f * length);
         bearings_value = G_json_value_init_array();
         if (bearings_value == NULL) {
             G_json_value_free(root_value);
             G_fatal_error(_("Failed to initialize JSON array. Out of memory?"));
         }
         bearings_array = G_json_array(bearings_value);
-        for (i = 0; i < npoints - 1; i++)
-            G_json_array_append_number(bearings_array, bearing[i]);
+        for (i = 0; i < npoints - 1; i++) {
+            /* Append null for a non-finite bearing so array positions
+             * keep matching segments. */
+            if (isfinite(bearing[i]))
+                G_json_array_append_number(bearings_array, bearing[i]);
+            else
+                G_json_array_append_null(bearings_array);
+        }
         G_json_object_set_value(root_object, "bearings", bearings_value);
         break;
     }
@@ -187,15 +222,18 @@ int main(int argc, char **argv)
         area = G_area_of_polygon(x, y, npoints);
         switch (format) {
         case SHELL:
-            printf("area=%.6f\n", sq_f * area);
+            printf("area=%s\n",
+                   format_value(buffer, sizeof(buffer), sq_f * area));
             break;
 
         case PLAIN:
-            printf("%-8s %10.6f %s\n", _("Area:"), sq_f * area, sq_units_name);
+            printf("%-8s %10s %s\n", _("Area:"),
+                   format_value(buffer, sizeof(buffer), sq_f * area),
+                   sq_units_name);
             break;
 
         case JSON:
-            G_json_object_set_number(root_object, "area", sq_f * area);
+            set_number_or_null(root_object, "area", sq_f * area);
             break;
         }
     }

@@ -76,6 +76,43 @@ def test_shell_format(session):
     )
 
 
+@pytest.fixture
+def latlon_session(tmp_path):
+    """Active session in a latitude-longitude project (scope: function)"""
+    project = tmp_path / "latlon_test"
+    gs.create_project(project, epsg="4326")
+    with gs.setup.init(project, env=os.environ.copy()) as session:
+        yield session
+
+
+def test_non_finite_length_json_null(latlon_session):
+    """Check that a non-finite length is JSON null, not a missing key
+
+    An out-of-range latitude makes G_distance() return NaN, which JSON
+    cannot represent as a number.
+    """
+    tools = Tools(session=latlon_session)
+    result = tools.m_measure(coordinates=(0, 100, 10, 80), format="json").json
+    assert result["length"] is None
+    assert result["bearings"] == pytest.approx([153.434949])
+
+
+def test_non_finite_length_plain_and_shell(latlon_session):
+    """Check that a non-finite length prints as nan in the text formats"""
+    tools = Tools(session=latlon_session)
+    result = tools.m_measure(coordinates=(0, 100, 10, 80))
+    assert "Length:         nan meters" in result.text.splitlines()
+    result = tools.m_measure(coordinates=(0, 100, 10, 80), format="shell")
+    assert "length=nan" in result.text.splitlines()
+
+
+def test_non_finite_bearing_json_null(session):
+    """Check that a non-finite bearing is JSON null, keeping array positions"""
+    tools = Tools(session=session)
+    result = tools.m_measure(coordinates=("nan", 0, 0, 1), format="json").json
+    assert result["bearings"] == [None]
+
+
 def read_original_outputs():
     """Read commands and their outputs captured from the original m.measure"""
     cases = []
