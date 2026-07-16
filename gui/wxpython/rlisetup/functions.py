@@ -50,18 +50,24 @@ def checkValue(value):
 
 
 def retRLiPath():
-    """Return the directory of configuration files for r.li"""
+    """Return the directory of configuration files for r.li.
+
+    Mirrors G_config_path() in lib/gis/home.c so that the r.li tools,
+    which resolve the configuration file relative to G_config_path(),
+    find the files this GUI writes and lists.
+    """
+    base = os.getenv("GRASS_CONFIG_DIR")
+    if not base:
+        base = os.getenv("APPDATA") if sys.platform == "win32" else os.getenv("HOME")
     if sys.platform == "win32":
-        grass_config_dirname = "GRASS8"
-        grass_config_dir = os.path.join(os.getenv("APPDATA"), grass_config_dirname)
+        grass_config_dir = os.path.join(base, "GRASS8")
+    elif sys.platform == "darwin":
+        grass_config_dir = os.path.join(base, "Library", "GRASS8")
     else:
-        grass_config_dirname = ".grass8"
-        grass_config_dir = os.path.join(os.getenv("HOME"), grass_config_dirname)
+        grass_config_dir = os.path.join(base, ".grass8")
 
     rlipath = os.path.join(grass_config_dir, "r.li")
-    if Path(rlipath).exists():
-        return rlipath
-    Path(rlipath).mkdir()
+    Path(rlipath).mkdir(parents=True, exist_ok=True)
     return rlipath
 
 
