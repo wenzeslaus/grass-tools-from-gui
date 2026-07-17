@@ -192,20 +192,33 @@ def main():
             gs.fatal(_("No non-null values found"))
         else:
             # We produce valid JSON with a value for n even when the query returned
-            # no rows or when all values are nulls.
-            result = {}
-            result["n"] = N
-            nan_value = None
-            result["min"] = nan_value
-            result["max"] = nan_value
-            result["range"] = nan_value
-            result["mean"] = nan_value
-            result["mean_abs"] = nan_value
-            result["variance"] = nan_value
-            result["stddev"] = nan_value
-            result["coeff_var"] = nan_value
-            result["sum"] = nan_value
-            json.dump({"statistics": result}, sys.stdout)
+            # no rows or when all values are nulls. The output has the same
+            # structure as with data, with null in place of the undefined
+            # statistics.
+            result = {
+                "n": N,
+                "min": None,
+                "max": None,
+                "range": None,
+                "mean": None,
+                "mean_abs": None,
+                "variance": None,
+                "stddev": None,
+                "coeff_var": None,
+                "sum": None,
+            }
+            if extend:
+                result["first_quartile"] = None
+                result["median"] = None
+                result["third_quartile"] = None
+            # for backward compatibility we include the statistics key
+            result["statistics"] = result.copy()
+            if extend:
+                result["statistics"]["percentiles"] = perc
+                result["statistics"]["percentile_values"] = [None] * len(perc)
+                result["percentiles"] = [{"percentile": p, "value": None} for p in perc]
+            json.dump(result, sys.stdout, indent=4)
+            sys.stdout.write("\n")
             return
 
     if output_format == "plain":
