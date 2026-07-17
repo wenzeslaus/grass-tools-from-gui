@@ -397,9 +397,9 @@ class IVDigit:
         else:
             name = grass.decode(name.value)
             mapset = grass.decode(mapset.value)
-        if name == Vect_get_name(self.poMapInfo) and mapset == Vect_get_mapset(
-            self.poMapInfo
-        ):
+        if name == grass.decode(
+            Vect_get_name(self.poMapInfo)
+        ) and mapset == grass.decode(Vect_get_mapset(self.poMapInfo)):
             self.poBgMapInfo = self.popoBgMapInfo = None
             self._error.NoMap(bgmap)
             return
@@ -1478,7 +1478,11 @@ class IVDigit:
                                 if ctype != DB_C_TYPE_STRING:
                                     sql += db_get_string(byref(value_string))
                                 else:
-                                    sql += "'%s'" % db_get_string(byref(value_string))
+                                    # Double single quotes as standard SQL
+                                    # escaping requires (see also dbmgr/base.py).
+                                    sql += "'%s'" % str(
+                                        db_get_string(byref(value_string))
+                                    ).replace("'", "''")
 
                     sql += ")"
                     db_set_string(byref(stmt), sql)
