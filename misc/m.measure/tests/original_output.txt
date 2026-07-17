@@ -1,0 +1,21 @@
+# command: m.measure coordinates=0,0,0,1,1,1 units=meters format=plain
+Length:    2.000000 meters
+# command: m.measure coordinates=0,0,0,1,1,1 units=meters format=shell
+units=meters,square meters
+length=2.000000
+# command: m.measure coordinates=0,0,2,0,2,2,0,2 units=meters format=shell
+units=meters,square meters
+length=6.000000
+area=4.000000
+# command: m.measure coordinates=0,0,2,0,2,2,0,2 units=meters format=plain
+Length:    6.000000 meters
+Area:      4.000000 square meters
+# command: m.measure coordinates=0,0,2,0,2,2,0,2 units=meters format=json
+{
+    "units": {
+        "length": "meters",
+        "area": "square meters"
+    },
+    "length": 6,
+    "area": 4
+}
