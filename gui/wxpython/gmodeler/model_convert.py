@@ -49,18 +49,22 @@ class BaseModelConverter(ABC):
             if ignoreBlock and item.GetBlockId():
                 # ignore items in loops of conditions
                 return
+            if not item.IsEnabled():
+                # disabled actions are skipped when the model runs
+                return
             self._writePythonAction(
                 item, variables, self.model.GetIntermediateData()[:3]
             )
         elif isinstance(item, (ModelLoop, ModelCondition)):
             # substitute condition
             cond = item.GetLabel()
-            for variable in self.model.GetVariables():
+            modelVariables = self.model.GetVariables()
+            for variable in modelVariables:
                 # curly braces are optional
                 pattern = re.compile(r"%(?:\{" + variable + r"\}|" + variable + r")")
                 if pattern.search(cond):
-                    value = variables[variable].get("value", "")
-                    if variables[variable].get("type", "string") == "string":
+                    value = modelVariables[variable].get("value", "")
+                    if modelVariables[variable].get("type", "string") == "string":
                         value = '"' + value + '"'
                     cond = pattern.sub(value, cond)
             if isinstance(item, ModelLoop):
@@ -70,17 +74,31 @@ class BaseModelConverter(ABC):
                     task = GUI(show=None).ParseCommand(cmd=utils.split(condText[1:-1]))
                     cond += "grass.read_command("
                     cond += (
-                        self._getPythonActionCmd(task, len(cond), variables=[condVar])
+                        self._getPythonActionCmd(
+                            item,
+                            task,
+                            len(cond),
+                            variables={
+                                "params": [],
+                                "flags": [],
+                                "vars": {condVar: None},
+                            },
+                        )
                         + ".splitlines()"
                     )
                 else:
                     cond += condText
                 self.fd.write("%s:\n" % cond)
                 self.indent += 4
-                variablesLoop = variables.copy()
+                # the loop variable is a local Python variable in the script
+                variablesLoop = dict(modelVariables)
                 variablesLoop[condVar] = None
                 for action in item.GetItems(self.model.GetItems(objType=ModelAction)):
-                    self._writeItem(action, ignoreBlock=False, variables=variablesLoop)
+                    actionVariables = action.GetParameterizedParams()
+                    actionVariables["vars"] = variablesLoop
+                    self._writeItem(
+                        action, ignoreBlock=False, variables=actionVariables
+                    )
                 self.indent -= 4
             if isinstance(item, ModelCondition):
                 self.fd.write("%sif %s:\n" % (" " * self.indent, cond))
@@ -896,28 +914,32 @@ def cleanup():
                 r"""    %s("g.remove", flags="f", type="raster",
                 name=%s)
 """
-                % (run_command, ",".join(f'"{x}"' for x in rast))
+                % (run_command, '"%s"' % ",".join(rast))
             )
         if vect:
             self.fd.write(
                 r"""    %s("g.remove", flags="f", type="vector",
                 name=%s)
 """
-                % (run_command, ",".join(f'"{x}"' for x in vect))
+                % (run_command, '"%s"' % ",".join(vect))
             )
         if rast3d:
             self.fd.write(
                 r"""    %s("g.remove", flags="f", type="raster_3d",
                 name=%s)
 """
-                % (run_command, ",".join(f'"{x}"' for x in rast3d))
+                % (run_command, '"%s"' % ",".join(rast3d))
             )
         if not rast and not vect and not rast3d:
             self.fd.write("    pass\n")
 
         self.fd.write("\ndef main(options, flags):\n")
         modelVars = self.model.GetVariables()
-        for item in self.model.GetItems(ModelAction):
+        for item in self.model.GetItems((ModelAction, ModelLoop)):
+            if isinstance(item, ModelLoop):
+                # loops write their actions themselves
+                self._writeItem(item)
+                continue
             modelParams = item.GetParameterizedParams()
             modelParams["vars"] = modelVars
             self._writeItem(item, variables=modelParams)
@@ -992,15 +1014,21 @@ if __name__ == "__main__":
                 # curly braces are optional
                 pattern = re.compile(r"%(?:\{" + var + r"\}|" + var + r")")
                 found = pattern.search(parameterizedValue)
-                if found:
-                    foundVar = True
-                    if found.end() != len(value):
-                        formattedVar = True
-                        parameterizedValue = pattern.sub(
-                            "{options['" + var + "']}", parameterizedValue
-                        )
-                    else:
-                        parameterizedValue = f'options["{var}"]'
+                if not found:
+                    continue
+                foundVar = True
+                if variables["vars"][var] is None:
+                    # a loop variable is a local Python variable in the script
+                    plainValue = var
+                    formatValue = "{" + var + "}"
+                else:
+                    plainValue = f'options["{var}"]'
+                    formatValue = "{options['" + var + "']}"
+                if found.start() == 0 and found.end() == len(parameterizedValue):
+                    parameterizedValue = plainValue
+                else:
+                    formattedVar = True
+                    parameterizedValue = pattern.sub(formatValue, parameterizedValue)
             if formattedVar:
                 parameterizedValue = 'f"' + parameterizedValue + '"'
 
