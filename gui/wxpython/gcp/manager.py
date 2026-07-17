@@ -29,6 +29,7 @@ This program is free software under the GNU General Public License
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import sys
@@ -1480,53 +1481,52 @@ class GCPPanel(MapPanel, ColumnSorterMixin):
         POINTS file
         """
         self.GCPcount = 0
-        try:
-            with open(self.file["points"], mode="w") as f:
-                # use os.linesep or '\n' here ???
-                f.write("# Ground Control Points File\n")
-                f.write("# \n")
-                f.write("# target location: " + self.currentlocation + "\n")
-                f.write("# target mapset: " + self.currentmapset + "\n")
-                f.write("#\tsource\t\ttarget\t\tstatus\n")
-                f.write("#\teast\tnorth\teast\tnorth\t(1=ok, 0=ignore)\n")
-                f.write(
-                    "#-----------------------     -----------------------     ---------------\n"  # noqa: E501
+        image_coordinates = []
+        target_coordinates = []
+        inactive = []
+        for index in range(self.list.GetItemCount()):
+            if self.list.IsItemChecked(index):
+                self.GCPcount += 1
+            else:
+                inactive.append(str(index + 1))
+            image_coordinates.extend(
+                (
+                    self.list.GetItem(index, 1).GetText(),
+                    self.list.GetItem(index, 2).GetText(),
                 )
-
-                for index in range(self.list.GetItemCount()):
-                    if self.list.IsItemChecked(index):
-                        check = "1"
-                        self.GCPcount += 1
-                    else:
-                        check = "0"
-                    coord0 = self.list.GetItem(index, 1).GetText()
-                    coord1 = self.list.GetItem(index, 2).GetText()
-                    coord2 = self.list.GetItem(index, 3).GetText()
-                    coord3 = self.list.GetItem(index, 4).GetText()
-                    f.write(
-                        coord0
-                        + " "
-                        + coord1
-                        + "     "
-                        + coord2
-                        + " "
-                        + coord3
-                        + "     "
-                        + check
-                        + "\n"
-                    )
-
-        except OSError as err:
-            GError(
-                parent=self,
-                message="%s <%s>. %s%s"
-                % (
-                    _("Writing POINTS file failed"),
-                    self.file["points"],
-                    os.linesep,
-                    err,
-                ),
             )
+            target_coordinates.extend(
+                (
+                    self.list.GetItem(index, 3).GetText(),
+                    self.list.GetItem(index, 4).GetText(),
+                )
+            )
+
+        self.grwiz.SwitchEnv("source")
+        ret = RunCommand(
+            "i.gcp.manage", parent=self, group=self.xygroup, operation="clear"
+        )
+        if ret == 0 and image_coordinates:
+            ret = RunCommand(
+                "i.gcp.manage",
+                parent=self,
+                group=self.xygroup,
+                operation="add",
+                image_coordinates=",".join(image_coordinates),
+                target_coordinates=",".join(target_coordinates),
+            )
+        if ret == 0 and inactive:
+            ret = RunCommand(
+                "i.gcp.manage",
+                parent=self,
+                group=self.xygroup,
+                operation="disable",
+                points=",".join(inactive),
+            )
+        self.grwiz.SwitchEnv("target")
+
+        if ret != 0:
+            # RunCommand has already shown the tool error to the user.
             return
 
         # if event != None save also to backup file
@@ -1551,42 +1551,41 @@ class GCPPanel(MapPanel, ColumnSorterMixin):
         if not targetMapWin:
             GError(parent=self, message=_("target mapwin not defined"))
 
-        try:
-            GCPcnt = 0
-            with open(self.file["points"]) as f:
-                for line in f:
-                    if line[0] == "#" or line == "":
-                        continue
-                    line = line.replace("\n", "").strip()
-                    coords = list(map(float, line.split()))
-                    if coords[4] == 1:
-                        check = True
-                        self.GCPcount += 1
-                    else:
-                        check = False
+        self.grwiz.SwitchEnv("source")
+        ret = RunCommand(
+            "i.gcp.manage",
+            parent=self,
+            read=True,
+            group=self.xygroup,
+            operation="list",
+            format="json",
+        )
+        self.grwiz.SwitchEnv("target")
 
-                    self.AddGCP(event=None)
-                    self.SetGCPData("source", (coords[0], coords[1]), sourceMapWin)
-                    self.SetGCPData("target", (coords[2], coords[3]), targetMapWin)
-                    index = self.list.GetSelected()
-                    if index != wx.NOT_FOUND:
-                        self.list.CheckItem(index, check)
-                    GCPcnt += 1
-
-        except OSError as err:
-            GError(
-                parent=self,
-                message="%s <%s>. %s%s"
-                % (
-                    _("Reading POINTS file failed"),
-                    self.file["points"],
-                    os.linesep,
-                    err,
-                ),
-            )
+        if not ret:
+            # RunCommand has already shown the tool error to the user.
             return
 
-        if GCPcnt == 0:
+        points = json.loads(ret)["points"]
+        for point in points:
+            if point["status"] == 1:
+                check = True
+                self.GCPcount += 1
+            else:
+                check = False
+
+            self.AddGCP(event=None)
+            self.SetGCPData(
+                "source", (point["image_east"], point["image_north"]), sourceMapWin
+            )
+            self.SetGCPData(
+                "target", (point["target_east"], point["target_north"]), targetMapWin
+            )
+            index = self.list.GetSelected()
+            if index != wx.NOT_FOUND:
+                self.list.CheckItem(index, check)
+
+        if not points:
             # 3 gcp is minimum
             for i in range(3):
                 self.AddGCP(None)
@@ -1976,9 +1975,9 @@ class GCPPanel(MapPanel, ColumnSorterMixin):
 
     def RMSError(self, xygroup, order):
         """
-        Uses m.transform to calculate forward and backward error for each used GCP
-        in POINTS file and insert error values into GCP list.
-        Calculates total forward and backward RMS error for all used points
+        Uses i.gcp.manage (which runs m.transform) to get the forward and
+        backward error for each used GCP in POINTS file and the total
+        forward and backward RMS errors, and inserts the values into GCP list
         """
         # save GCPs to points file to make sure that all checked GCPs are used
         self.SaveGCPs(None)
@@ -1987,11 +1986,17 @@ class GCPPanel(MapPanel, ColumnSorterMixin):
         if not self.CheckGCPcount(msg=True):
             return
 
-        # get list of forward and reverse rms error values for each point
+        # get per-point and total forward and backward error values
         self.grwiz.SwitchEnv("source")
 
         ret = RunCommand(
-            "m.transform", parent=self, read=True, group=xygroup, order=order
+            "i.gcp.manage",
+            parent=self,
+            read=True,
+            group=xygroup,
+            operation="rms",
+            order=order,
+            format="json",
         )
 
         self.grwiz.SwitchEnv("target")
@@ -2000,40 +2005,43 @@ class GCPPanel(MapPanel, ColumnSorterMixin):
             GError(
                 parent=self,
                 message=_(
-                    "Could not calculate RMS Error.\nPossible error with m.transform."
+                    "Could not calculate RMS Error.\nPossible error with i.gcp.manage."
                 ),
             )
             return
-        errlist = ret.splitlines()
+        errors = json.loads(ret)
 
         # insert error values into GCP list for checked items
         sdfactor = float(UserSettings.Get(group="gcpman", key="rms", subkey="sdfactor"))
         GCPcount = 0
         sumsq_fwd_err = 0.0
-        sumsq_bkw_err = 0.0
         sum_fwd_err = 0.0
         highest_fwd_err = 0.0
         self.highest_key = 0
         highest_idx = 0
 
         for index in range(self.list.GetItemCount()):
+            key = self.list.GetItemData(index)
             if self.list.IsItemChecked(index):
-                key = self.list.GetItemData(index)
-                fwd_err, bkw_err = errlist[GCPcount].split()
-                self.list.SetItem(index, 5, fwd_err)
-                self.list.SetItem(index, 6, bkw_err)
-                self.mapcoordlist[key][5] = float(fwd_err)
-                self.mapcoordlist[key][6] = float(bkw_err)
+                # SaveGCPs() saved the rows in list order, so the point
+                # numbered index + 1 is the row at index
+                fwd_err = errors["points"][index]["forward"]
+                bkw_err = errors["points"][index]["backward"]
+                # %f matches the formatting m.transform used to fill
+                # these columns before
+                self.list.SetItem(index, 5, "%f" % fwd_err)
+                self.list.SetItem(index, 6, "%f" % bkw_err)
+                self.mapcoordlist[key][5] = fwd_err
+                self.mapcoordlist[key][6] = bkw_err
                 self.list.SetItemTextColour(index, wx.BLACK)
                 if self.highest_only:
-                    if highest_fwd_err < float(fwd_err):
-                        highest_fwd_err = float(fwd_err)
+                    if highest_fwd_err < fwd_err:
+                        highest_fwd_err = fwd_err
                         self.highest_key = key
                         highest_idx = index
 
-                sumsq_fwd_err += float(fwd_err) ** 2
-                sumsq_bkw_err += float(bkw_err) ** 2
-                sum_fwd_err += float(fwd_err)
+                sumsq_fwd_err += fwd_err**2
+                sum_fwd_err += fwd_err
                 GCPcount += 1
                 continue
 
@@ -2062,9 +2070,9 @@ class GCPPanel(MapPanel, ColumnSorterMixin):
                     if self.mapcoordlist[key][5] > self.rmsthresh:
                         self.list.SetItemTextColour(index, wx.RED)
 
-        # calculate global RMS error (geometric mean)
-        self.fwd_rmserror = round((sumsq_fwd_err / GCPcount) ** 0.5, 4)
-        self.bkw_rmserror = round((sumsq_bkw_err / GCPcount) ** 0.5, 4)
+        # total forward and backward RMS errors as computed by i.gcp.manage
+        self.fwd_rmserror = round(errors["forward_rms"], 4)
+        self.bkw_rmserror = round(errors["backward_rms"], 4)
         self.list.ResizeColumns()
 
     def GetNewExtent(self, region, map=None):
