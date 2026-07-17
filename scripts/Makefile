@@ -23,6 +23,7 @@ SUBDIRS = \
 	g.extension \
 	g.extension.all \
 	g.manual \
+	g.model.run \
 	g.search.modules \
 	i.band.library \
 	i.colors.enhance \
