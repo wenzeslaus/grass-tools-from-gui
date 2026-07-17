@@ -21,10 +21,8 @@ import os
 import getpass
 import copy
 import re
-import mimetypes
 
 import xml.etree.ElementTree as ET
-from pathlib import Path
 from xml.sax import saxutils
 
 import wx
@@ -34,7 +32,6 @@ from core.gcmd import (
     GMessage,
     GException,
     GError,
-    RunCommand,
     GWarning,
     GetDefaultEncoding,
 )
@@ -52,7 +49,7 @@ from gmodeler.dialogs import ModelParamDialog
 from core.giface import StandaloneGrassInterface
 from gui_core.forms import GUI
 
-from grass.script import task as gtask
+from grass.script import core as grass
 
 
 class Model:
@@ -506,116 +503,13 @@ class Model:
                         break
                 if report:
                     errList.append(cmd[0] + ": " + _("undefined variable '%s'") % var)
-            # TODO: check variables in file only optionally
-            # errList += self._substituteFile(action, checkOnly = True)
 
         return errList
 
-    def _substituteFile(self, item, params=None, checkOnly=False):
-        """Substitute variables in command file inputs
-
-        :param bool checkOnly: True to check variable, don't touch files
-
-        :return: list of undefined variables
-        """
-        errList = []
-
-        self.fileInput = {}
-
-        # collect ascii inputs
-        for p in item.GetParams()["params"]:
-            if (
-                p.get("element", "") == "file"
-                and p.get("prompt", "") == "input"
-                and p.get("age", "") == "old"
-            ):
-                filename = p.get("value", p.get("default", ""))
-                if filename and mimetypes.guess_type(filename)[0] == "text/plain":
-                    self.fileInput[filename] = None
-
-        for finput in self.fileInput:
-            # read lines
-            data = Path(finput).read_text()
-            self.fileInput[finput] = data
-
-            # substitute variables
-            write = False
-            variables = self.GetVariables()
-            for variable in variables:
-                # curly braces are optional
-                pattern = re.compile(r"%(?:\{" + variable + r"\}|" + variable + r")")
-                value = ""
-                if params and "variables" in params:
-                    for p in params["variables"]["params"]:
-                        if variable == p.get("name", ""):
-                            if p.get("type", "string") == "string":
-                                value = p.get("value", "")
-                            else:
-                                value = str(p.get("value", ""))
-                            break
-
-                if not value:
-                    value = variables[variable].get("value", "")
-
-                data = pattern.sub(value, data)
-                if not checkOnly:
-                    write = True
-
-            pattern = re.compile(r"(.*)(%\{.+})(.*)")
-            sval = pattern.search(data)
-            if sval:
-                s = sval.group(2).strip()
-                var = (
-                    s[2:-1] if s.startswith("%{") else s[1:]
-                )  # strip curly braces only if present
-                cmd = item.GetLog(string=False)[0]
-                errList.append(cmd + ": " + _("undefined variable '%s'") % var)
-
-            if not checkOnly:
-                if write:
-                    Path(finput).write_text(data)
-                else:
-                    self.fileInput[finput] = None
-
-        return errList
-
-    def OnPrepare(self, item, params):
-        self._substituteFile(item, params, checkOnly=False)
-
-    def RunAction(self, item, params, log, onDone=None, onPrepare=None, statusbar=None):
-        """Run given action
-
-        :param item: action item
-        :param params: parameters dict
-        :param log: logging window
-        :param onDone: on-done method
-        :param onPrepare: on-prepare method
-        :param statusbar: wx.StatusBar instance or None
-        """
-        name = "({0}) {1}".format(item.GetId(), item.GetLabel())
-        if name in params:
-            paramsOrig = item.GetParams(dcopy=True)
-            item.MergeParams(params[name])
-
-        if statusbar:
-            statusbar.SetStatusText(_("Running model..."), 0)
-
-        data = {"item": item, "params": copy.deepcopy(params)}
-        log.RunCmd(
-            command=item.GetLog(string=False, substitute=params),
-            onDone=onDone,
-            onPrepare=self.OnPrepare,
-            userData=data,
-        )
-
-        if name in params:
-            item.SetParams(paramsOrig)
-
-    def Run(self, log, onDone, parent=None):
+    def Run(self, log, parent=None):
         """Run model
 
         :param log: logging window (see gconsole.GConsole)
-        :param onDone: on-done method
         :param parent: window for messages or None
         """
         if self.GetNumItems() < 1:
@@ -685,99 +579,43 @@ class Model:
                 )
                 return
 
+        # Write the model, with the variable values from the dialog set,
+        # to a temporary model file for g.model.run. The parameterized
+        # option values from the dialog are already set in the action
+        # tasks. The file is removed by OnModelDone in the panel.
+        variablesOrig = copy.deepcopy(self.variables)
+        if "variables" in params:
+            for p in params["variables"]["params"]:
+                name = p.get("name", "")
+                if name in self.variables:
+                    self.variables[name]["value"] = p.get("value", "")
+        self.runModelFile = grass.tempfile()
+        try:
+            with open(self.runModelFile, "w") as fd:
+                WriteModelFile(fd=fd, model=self)
+        except Exception:
+            GError(
+                parent=parent,
+                message=_("Writing current settings to model file failed."),
+            )
+            return
+        finally:
+            self.variables = variablesOrig
+
+        # Delegate the run to g.model.run; the deletion of intermediate
+        # data is left to the tool unless disabled in the dialog.
+        cmd = ["g.model.run", "input=%s" % self.runModelFile]
+        if not delInterData:
+            cmd.append("-i")
         log.cmdThread.SetId(-1)
-        for item in self.GetItems():
-            if not item.IsEnabled():
-                continue
-            if isinstance(item, ModelAction):
-                if item.GetBlockId():
-                    continue
-                self.RunAction(item, params, log)
-            elif isinstance(item, ModelLoop):
-                cond = item.GetLabel()
+        log.RunCmd(command=cmd)
 
-                # substitute variables in condition
-                variables = self.GetVariables()
-                for variable in variables:
-                    # curly braces are optional
-                    pattern = re.compile(
-                        r"%(?:\{" + variable + r"\}|" + variable + r")"
-                    )
-                    if not pattern.search(cond):
-                        continue
-                    value = ""
-                    if params and "variables" in params:
-                        for p in params["variables"]["params"]:
-                            if variable == p.get("name", ""):
-                                value = p.get("value", "")
-                                break
-
-                    if not value:
-                        value = variables[variable].get("value", "")
-
-                    if not value:
-                        continue
-                    vtype = variables[variable].get("type", "string")
-                    if vtype == "string":
-                        value = '"' + value + '"'
-                    cond = pattern.sub(value, cond)
-
-                # split condition
-                # TODO: this part needs some better solution
-                condVar, condText = (x.strip() for x in re.split(r"\s* in \s*", cond))
-                # curly braces are optional
-                pattern = re.compile(r"%(?:\{" + condVar + r"\}|" + condVar + r")")
-                # for vars()[condVar] in eval(condText): ?
-                vlist = []
-                if condText[0] == "`" and condText[-1] == "`":
-                    # run command
-                    cmd, dcmd = gtask.cmdlist_to_tuple(condText[1:-1].split(" "))
-                    ret = RunCommand(cmd, read=True, **dcmd)
-                    if ret:
-                        vlist = ret.splitlines()
-                else:
-                    vlist = eval(condText)
-
-                if "variables" not in params:
-                    params["variables"] = {"params": []}
-                varDict = {"name": condVar, "value": ""}
-                params["variables"]["params"].append(varDict)
-
-                for var in vlist:
-                    for action in item.GetItems(self.GetItems()):
-                        if not action.IsEnabled():
-                            continue
-
-                        varDict["value"] = var
-
-                        self.RunAction(item=action, params=params, log=log)
-                params["variables"]["params"].remove(varDict)
-
-        # store run params; intermediate data is deleted by the on-done
-        # handler when requested
+        # store run params
         self._runParams = params
-        self._delInterData = delInterData
 
     def GetRunParams(self):
         """Get the models run parameters"""
         return getattr(self, "_runParams", None)
-
-    def GetDeleteIntermediateData(self):
-        """Get whether the last run requested intermediate data removal"""
-        return getattr(self, "_delInterData", False)
-
-    def DeleteIntermediateData(self, log):
-        """Delete intermediate data"""
-        rast, vect, rast3d, msg = self.GetIntermediateData()
-
-        if rast:
-            log.RunCmd(["g.remove", "-f", "type=raster", "name=%s" % ",".join(rast)])
-        if rast3d:
-            log.RunCmd(
-                ["g.remove", "-f", "type=raster_3d", "name=%s" % ",".join(rast3d)]
-            )
-        if vect:
-            log.RunCmd(["g.remove", "-f", "type=vector", "name=%s" % ",".join(vect)])
 
     def GetIntermediateData(self):
         """Get info about intermediate data"""
