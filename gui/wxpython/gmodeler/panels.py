@@ -43,7 +43,7 @@ from wx.lib.newevent import NewEvent
 
 from core.gconsole import GConsole, EVT_CMD_RUN, EVT_CMD_DONE
 from core.debug import Debug
-from core.gcmd import GMessage, GException, GWarning, GError
+from core.gcmd import GMessage, GException, GWarning, GError, RunCommand
 from core.settings import UserSettings
 from core.giface import Notification, StandaloneGrassInterface
 
@@ -1668,6 +1668,33 @@ class PythonPanel(wx.Panel):
             # script_type == "Python", fallback
             self.write_object = ModelToPython
 
+    def _getPythonScriptFromTool(self):
+        """Generate the Python script by running g.model.export.
+
+        The tool generates grass.script code equivalent to ModelToPython
+        and additionally exports loops, comments out disabled actions,
+        keeps text preceding a variable reference in option values, and
+        removes multiple intermediate maps without a syntax error.
+
+        :return: script text, or None when the tool reported an error
+        """
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            model_file = os.path.join(tmp_dir, "model.gxm")
+            script_file = os.path.join(tmp_dir, "script.py")
+            with open(model_file, "w") as fd:
+                WriteModelFile(fd=fd, model=self.parent.GetModel())
+            ret = RunCommand(
+                "g.model.export",
+                parent=self,
+                input=model_file,
+                output=script_file,
+                format="python",
+            )
+            if ret != 0:
+                # RunCommand already showed the tool error to the user.
+                return None
+            return Path(script_file).read_text()
+
     def RefreshScript(self):
         """Refresh the script.
 
@@ -1703,14 +1730,23 @@ class PythonPanel(wx.Panel):
         else:
             grassAPIStr = "tools"
 
-        with tempfile.TemporaryFile(mode="r+") as fd:
-            self.write_object(
-                fd,
-                self.parent.GetModel(),
-                grassAPI=grassAPIStr,
-            )
-            fd.seek(0)
-            self.body.SetText(fd.read())
+        if self.write_object == ModelToPython and grassAPIStr == "script":
+            # The g.model.export tool covers the grass.script variant of
+            # the Python export; pygrass and tools variants are not
+            # supported by the tool yet.
+            script = self._getPythonScriptFromTool()
+            if script is None:
+                return False
+            self.body.SetText(script)
+        else:
+            with tempfile.TemporaryFile(mode="r+") as fd:
+                self.write_object(
+                    fd,
+                    self.parent.GetModel(),
+                    grassAPI=grassAPIStr,
+                )
+                fd.seek(0)
+                self.body.SetText(fd.read())
 
         self.body.modified = False
 
@@ -1763,8 +1799,18 @@ class PythonPanel(wx.Panel):
 
             dlg.Destroy()
 
+        script = None
+        if force and self.write_object == ModelToPython:
+            # The tool generates grass.script code, matching the previous
+            # ModelToPython default API.
+            script = self._getPythonScriptFromTool()
+            if script is None:
+                return ""
+
         with open(filename, "w") as fd:
-            if force:
+            if script is not None:
+                fd.write(script)
+            elif force:
                 self.write_object(fd, self.parent.GetModel())
             else:
                 fd.write(self.body.GetText())
