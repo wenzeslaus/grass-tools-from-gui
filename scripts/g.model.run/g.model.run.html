@@ -1,0 +1,118 @@
+<h2>DESCRIPTION</h2>
+
+<em>g.model.run</em> runs a model created in the wxGUI Graphical
+Modeler (<em>g.gui.gmodeler</em>) and stored in a GRASS Model file
+(<code>.gxm</code>) without starting the GUI. Actions (tool runs) are
+executed in the order defined by the model; actions disabled in the
+model are skipped. When the model has the overwrite property set, all
+actions run with overwriting enabled.
+
+<p>
+Model variables are used with their default values from the model
+file. The defaults can be overridden with the <b>variables</b> option,
+e.g., <code>variables="raster=elevation"</code>. Every variable must
+end up with a value; the tool ends with an error otherwise, matching
+the behavior of the GUI dialog which requires values for all variables
+before a run.
+
+<p>
+Options and flags marked as parameterized in the model are set with
+the <b>parameters</b> option using <code>action.option=value</code>
+keys, where <code>action</code> is either the numeric action id or the
+tool name of the action, e.g.,
+<code>parameters="r.colors.color=bgyr"</code> or
+<code>parameters="7.color=bgyr"</code>. Parameterized flags take the
+values <code>true</code> and <code>false</code>. This mirrors the GUI,
+which asks for parameterized options grouped by action in a dialog
+before the run; the action id makes the reference unambiguous when the
+same tool is used by several actions (the tool asks for the id when a
+tool name is ambiguous). Parameterized options without a default value
+in the model must be given a value; the tool ends with an error
+listing the missing keys otherwise. Values for options which are not
+parameterized in the model are rejected.
+
+<p>
+Data marked as intermediate in the model is removed at the end of a
+successful run, in the same way the GUI removes it when the
+<em>Delete intermediate data</em> option is checked. The <b>-i</b>
+flag keeps the intermediate data instead.
+
+<h2>NOTES</h2>
+
+Coverage of the <code>.gxm</code> format:
+
+<ul>
+<li>Variables: supported, including the <code>%variable</code> and
+<code>%{variable}</code> reference forms in option values. Values of
+string-typed variables are quoted when substituted into loop
+conditions (like in the GUI).</li>
+<li>Parameterized options and flags: supported through the
+<b>parameters</b> option, including parameterized long flags such as
+<code>overwrite</code>.</li>
+<li>Loops: supported for both condition forms the Graphical Modeler
+writes: a list of values (e.g., <code>map in ["a", "b"]</code>) and a
+command in backticks whose output lines are the values (e.g.,
+<code>map in `g.list type=raster pattern=x*`</code>). The list form is
+evaluated as a Python literal only (no expressions). An action
+belonging to more than one loop (nested loops) causes an error.</li>
+<li>If-else conditions: not supported; the tool ends with an error
+when the model contains an if-else item. Note that the GUI's own model
+run (<code>Model.Run</code> in
+<code>gui/wxpython/gmodeler/model.py</code>) does not execute if-else
+items either.</li>
+<li>Intermediate data: raster, vector, and 3D raster data items marked
+as intermediate are removed with <em>g.remove</em>; other types are
+reported and kept. Intermediate names which still contain an
+unresolved variable (e.g., a loop variable) are reported and
+kept.</li>
+<li>Layout-only elements (positions, sizes, comment items) are
+ignored.</li>
+</ul>
+
+Because <b>variables</b> and <b>parameters</b> accept multiple values,
+values containing commas cannot be passed through them (the standard
+GRASS parser splits multiple values on commas).
+
+<p>
+The <code>.gxm</code> parsing code is duplicated in
+<em>g.model.export</em> because scripts install as standalone files.
+As a follow-up, the parser should move to a Python library location
+(e.g., a new <code>grass.models</code> package) which the GUI Graphical
+Modeler can use as well.
+
+<h2>EXAMPLES</h2>
+
+Run a model with the variable and parameterized option defaults stored
+in the model:
+
+<div class="code"><pre>
+g.model.run input=zipcodes_avg_elevation.gxm
+</pre></div>
+
+Override a model variable and a parameterized option (the <b>color</b>
+option of the <em>r.colors</em> action):
+
+<div class="code"><pre>
+g.model.run input=zipcodes_avg_elevation.gxm \
+    variables="raster=/data/elevation.tif" \
+    parameters="r.colors.color=viridis"
+</pre></div>
+
+Keep the intermediate data for inspection:
+
+<div class="code"><pre>
+g.model.run -i input=zipcodes_avg_elevation.gxm
+</pre></div>
+
+<h2>SEE ALSO</h2>
+
+<em>
+<a href="g.gui.gmodeler.html">g.gui.gmodeler</a>,
+<a href="g.model.export.html">g.model.export</a>
+</em>
+
+<h2>AUTHORS</h2>
+
+Vaclav Petras, NC State University, Center for Geospatial Analytics,
+with substantial AI assistance<br>
+Based on the wxGUI Graphical Modeler by Martin Landa and Ondrej Pesek
