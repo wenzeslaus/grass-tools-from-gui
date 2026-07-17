@@ -17,7 +17,7 @@ This program is free software under the GNU General Public License
 import os
 import wx
 
-from core.gcmd import GException, GError, GMessage
+from core.gcmd import GException, GError, GMessage, RunCommand
 from grass.imaging import writeAvi, writeGif, writeIms, writeSwf
 from core.gthread import gThread
 from core.settings import UserSettings
@@ -514,8 +514,113 @@ class AnimationController(wx.EvtHandler):
             self._dialogs["export"] = dlg
             dlg.Show()
 
+    def _toolExportParameters(self, exportInfo, decorations, size):
+        """Map the export request to t.rast.render parameters.
+
+        Returns a parameter dictionary for RunCommand, or None when the
+        request cannot be expressed as a t.rast.render call and the
+        in-GUI pipeline is needed: multiple windows, layer stacks,
+        legends, 3D view, region animation, non-white background,
+        decorations other than the time stamp, resampling to a common
+        granularity, SWF, non-PNG sequences, or custom AVI encoding.
+        """
+        if self.temporalMode != TemporalMode.TEMPORAL:
+            return None
+        if len(self.animationData) != 1:
+            return None
+        anim = self.animationData[0]
+        if anim.viewMode != "2d" or anim.legendCmd:
+            return None
+        if anim.startRegion or anim.endRegion or anim.zoomRegionValue:
+            return None
+        layers = [layer for layer in anim.layerList if layer.active]
+        if len(layers) != 1:
+            return None
+        layer = layers[0]
+        if layer.mapType != "strds":
+            return None
+        # Only plain d.rast; the tool would not apply any extra option.
+        if (
+            not layer.cmd
+            or len(layer.cmd) != 2
+            or layer.cmd[0] != "d.rast"
+            or not layer.cmd[1].startswith("map=")
+        ):
+            return None
+        # The tool renders on the default white background.
+        bgcolor = UserSettings.Get(group="animation", key="bgcolor", subkey="color")
+        if tuple(bgcolor[:3]) != (255, 255, 255):
+            return None
+        if any(decoration["name"] != "time" for decoration in decorations):
+            return None
+        # The tool renders exactly the registered maps; a sampled sequence
+        # with gaps or repeated frames needs the GUI pipeline.
+        mapNamesDict = self.temporalManager.GetLabelsAndMaps()[1]
+        if mapNamesDict[anim.firstStdsNameType[0]] != list(layer.maps):
+            return None
+        if exportInfo["method"] == "sequence":
+            if exportInfo["format"] != "PNG":
+                return None
+            output = os.path.join(exportInfo["directory"], exportInfo["prefix"])
+            outputFormat = "frames"
+        elif exportInfo["method"] == "gif":
+            output = exportInfo["file"]
+            outputFormat = "gif"
+        elif exportInfo["method"] == "avi":
+            # The tool encodes with the writeAvi defaults.
+            if exportInfo["encoding"] != "mpeg4" or exportInfo["options"]:
+                return None
+            output = exportInfo["file"]
+            outputFormat = "avi"
+        else:
+            return None
+        return {
+            "flags": "t" if decorations else "",
+            "input": layer.name,
+            "output": output,
+            "format": outputFormat,
+            "size": "{},{}".format(size[0], size[1]),
+            "fps": max(1, round(1000.0 / self.timeTick)),
+        }
+
+    def _exportWithTool(self, exportInfo, decorations, size):
+        """Export a single-STRDS animation by running t.rast.render.
+
+        Returns True when the export was handed over to the tool and
+        False when the in-GUI export pipeline must be used instead.
+        """
+        params = self._toolExportParameters(exportInfo, decorations, size)
+        if params is None:
+            return False
+        self.busy = wx.BusyInfo(
+            _("Exporting animation, please wait..."), parent=self.frame
+        )
+        wx.GetApp().Yield()
+
+        def export_tool_callback(event):
+            del self.busy
+            returncode, messages = event.ret
+            if returncode != 0:
+                GError(parent=self.frame, message=messages)
+
+        # Run the tool in a background thread to keep the GUI usable,
+        # as the AVI encoding already does.
+        thread = gThread()
+        thread.Run(
+            callable=RunCommand,
+            prog="t.rast.render",
+            # The export dialog already asked about overwriting the file.
+            overwrite=True,
+            getErrorMsg=True,
+            ondone=export_tool_callback,
+            **params,
+        )
+        return True
+
     def _export(self, exportInfo, decorations):
         size = self.frame.animationPanel.GetSize()
+        if self._exportWithTool(exportInfo, decorations, size):
+            return
         if self.temporalMode == TemporalMode.TEMPORAL:
             timeLabels, mapNamesDict = self.temporalManager.GetLabelsAndMaps()
             frameCount = len(timeLabels)
