@@ -56,7 +56,6 @@ from gui_core.widgets import CoordinatesValidator
 from gui_core import gselect
 from core import globalvar
 from grass.pygrass.vector.geometry import Point
-from grass.pygrass.raster import RasterRow
 from grass.pygrass.gis.region import Region
 from collections import OrderedDict
 from subprocess import PIPE
@@ -438,7 +437,6 @@ class TplotFrame(wx.Frame):
                 return
             sp.select(dbif=self.dbif)
 
-            minmin = sp.metadata.get_min_min()
             self.plotNameListR.append(name)
             self.timeDataR[name] = OrderedDict()
 
@@ -482,18 +480,39 @@ class TplotFrame(wx.Frame):
             rows = sp.get_registered_maps(
                 columns=columns, where=None, order="start_time", dbif=self.dbif
             )
-            for row in rows:
-                self.timeDataR[name][row[0]] = {}
-                self.timeDataR[name][row[0]]["start_datetime"] = row[1]
-                self.timeDataR[name][row[0]]["end_datetime"] = row[2]
-                r = RasterRow(row[0])
-                r.open()
-                val = r.get_value(self.poi)
-                r.close()
-                if val == -2147483648 and val < minmin:
-                    self.timeDataR[name][row[0]]["value"] = None
-                else:
-                    self.timeDataR[name][row[0]]["value"] = val
+            if not rows:
+                continue
+            # Sample all maps of the dataset in one call; t.rast.what
+            # sorts by start_time like the query above, so its output
+            # lines match rows one to one.
+            what = gs.read_command(
+                "t.rast.what",
+                strds=fullname,
+                coordinates=(self.poi.x, self.poi.y),
+                null_value="*",
+                separator="|",
+                order="start_time",
+                layout="row",
+                quiet=True,
+            )
+            lines = what.splitlines()
+            if len(lines) != len(rows):
+                GError(
+                    parent=self,
+                    showTraceback=False,
+                    message=_(
+                        "Number of values sampled by t.rast.what does"
+                        " not match the number of maps in dataset <{}>"
+                    ).format(name),
+                )
+                return
+            for row, line in zip(rows, lines, strict=False):
+                value = line.split("|")[-1]
+                self.timeDataR[name][row[0]] = {
+                    "start_datetime": row[1],
+                    "end_datetime": row[2],
+                    "value": None if value == "*" else float(value),
+                }
 
         self.unit = unit
         self.temporalType = mode
@@ -641,54 +660,58 @@ class TplotFrame(wx.Frame):
 
                 continue
 
-            wherequery = ""
+            if not rows:
+                continue
             cats = self._getExistingCategories(rows[0]["name"], cats)
-            totcat = len(cats)
-            ncat = 1
             for cat in cats:
-                if ncat == 1 and totcat != 1:
-                    wherequery += "{k}={c} or".format(c=cat, k="{key}")
-                elif ncat == 1 and totcat == 1:
-                    wherequery += "{k}={c}".format(c=cat, k="{key}")
-                elif ncat == totcat:
-                    wherequery += " {k}={c}".format(c=cat, k="{key}")
-                else:
-                    wherequery += " {k}={c} or".format(c=cat, k="{key}")
-
                 catn = "cat{num}".format(num=cat)
                 self.plotNameListV.append("{na}+{cat}".format(na=name, cat=catn))
                 self.timeDataV[name][catn] = OrderedDict()
-                ncat += 1
-            for row in rows:
-                lay = int(row["layer"])
-                catkey = self._parseVDbConn(row["name"], lay)
-                if not catkey:
-                    GError(
-                        parent=self,
-                        showTraceback=False,
-                        message=_(
-                            "No connection between vector map {vmap} and layer {la}"
-                        ).format(vmap=row["name"], la=lay),
-                    )
-                    return
-                vals = gs.vector_db_select(
-                    map=row["name"],
-                    layer=lay,
-                    where=wherequery.format(key=catkey),
-                    columns=attribute,
+            # The category key column of the first map is used for all
+            # maps; t.vect.db.select applies one where clause to the
+            # whole dataset. Maps registered without a layer are read
+            # from layer 1, matching the t.vect.db.select default.
+            lay = rows[0]["layer"] or 1
+            catkey = self._parseVDbConn(rows[0]["name"], lay)
+            if not catkey:
+                GError(
+                    parent=self,
+                    showTraceback=False,
+                    message=_(
+                        "No connection between vector map {vmap} and layer {la}"
+                    ).format(vmap=rows[0]["name"], la=lay),
                 )
-                layn = "lay{num}".format(num=lay)
+                return
+            wherequery = " or ".join(
+                "{key}={cat}".format(key=catkey, cat=cat) for cat in cats
+            )
+            out = gs.read_command(
+                "t.vect.db.select",
+                input=fullname,
+                columns="{key},{attribute}".format(key=catkey, attribute=attribute),
+                where=wherequery,
+                quiet=True,
+            )
+            # Group values by start time and category. Header lines
+            # (start_time|end_time|...) do not match any map start time
+            # below, so they are skipped implicitly. Splitting is
+            # limited to keep separators inside attribute values intact.
+            values = {}
+            for line in out.splitlines():
+                start, end, cat, value = line.split("|", 3)
+                values.setdefault(start, {})[cat] = value
+            for i, row in enumerate(rows):
+                mapn = "map{num}".format(num=i)
+                rowValues = values.get(str(row["start_time"]), {})
                 for cat in cats:
+                    if cat not in rowValues:
+                        continue
                     catn = "cat{num}".format(num=cat)
-                    if layn not in self.timeDataV[name][catn].keys():
-                        self.timeDataV[name][catn][layn] = {}
-                    self.timeDataV[name][catn][layn]["start_datetime"] = row[
-                        "start_time"
-                    ]
-                    self.timeDataV[name][catn][layn]["end_datetime"] = row["end_time"]
-                    self.timeDataV[name][catn][layn]["value"] = vals["values"][
-                        int(cat)
-                    ][0]
+                    self.timeDataV[name][catn][mapn] = {
+                        "start_datetime": row["start_time"],
+                        "end_datetime": row["end_time"],
+                        "value": rowValues[cat],
+                    }
         self.unit = unit
         self.temporalType = mode
         return
