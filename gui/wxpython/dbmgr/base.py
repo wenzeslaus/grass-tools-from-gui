@@ -34,7 +34,7 @@ import os
 import locale
 import tempfile
 import copy
-import math
+import json
 import functools
 
 from core import globalvar
@@ -4023,10 +4023,6 @@ class FieldStatistics(wx.Frame):
         # Get cat key col name
         catColName = self.parent.GetMapCatKeyColumn()["name"]
 
-        eol = "\n"
-        sqlWhereClause = ""
-        baseSql = "select {fn}({column}) from {table} {where};{eol}"
-
         # Interactively selected rows
         interactivelySelectedCats = self.parent.GetSelectedItems()
         # SQL filtered rows
@@ -4043,82 +4039,30 @@ class FieldStatistics(wx.Frame):
         elif len(interactivelySelectedCats) == 0 and len(sqlFilteredCats) > 0:
             cats = ", ".join(sqlFilteredCats)
 
+        where = None
         if cats:
-            sqlWhereClause = f" where {catColName} in ({cats})"
-
-        fd, sqlFilePath = tempfile.mkstemp(text=True)
-        stats = ["count", "min", "max", "avg", "sum", "null"]
-        with open(sqlFilePath, "w") as sqlFile:
-            for fn in stats:
-                if fn == "null":
-                    sql = "select count(*) from {table} where {column} is null {andOperatorCondition};{eol}"
-                    # Appending SQL AND operator condition
-                    if sqlWhereClause:
-                        sqlFile.write(
-                            sql.format(
-                                table=table,
-                                column=column,
-                                andOperatorCondition=f" and {catColName} in ({cats})",
-                                eol=eol,
-                            )
-                        )
-                    else:
-                        sqlFile.write(
-                            sql.format(
-                                table=table,
-                                column=column,
-                                andOperatorCondition="",
-                                eol=eol,
-                            )
-                        )
-                else:
-                    # Appending SQL WHERE clause with IN operator
-                    sqlFile.write(
-                        baseSql.format(
-                            fn=fn,
-                            column=column,
-                            table=table,
-                            where=sqlWhereClause,
-                            eol=eol,
-                        )
-                    )
+            where = f"{catColName} in ({cats})"
 
         dataStr = RunCommand(
-            "db.select",
+            "v.db.univar",
             parent=self.parent,
             read=True,
-            flags="c",
-            input=sqlFilePath,
-            driver=driver,
-            database=database,
+            map=self.parent.dbMgrData["vectName"],
+            layer=self.parent.layer,
+            column=column,
+            where=where,
+            format="json",
         )
         if not dataStr:
             GError(parent=self.parent, message=_("Unable to calculate statistics."))
             self.Close()
             return
 
-        dataLines = dataStr.splitlines()
-        if len(dataLines) != len(stats):
-            GError(
-                parent=self.parent,
-                message=_(
-                    "Unable to calculate statistics. "
-                    "Invalid number of lines %d (should be %d)."
-                )
-                % (len(dataLines), len(stats)),
-            )
-            self.Close()
-            return
-
-        # calculate stddev
-        avg = float(dataLines[stats.index("avg")])
-        count = float(dataLines[stats.index("count")])
-        sql = "select (%(column)s - %(avg)f)*(%(column)s - %(avg)f) from %(table)s" % {
-            "column": column,
-            "avg": avg,
-            "table": table,
-        }
-        dataVar = RunCommand(
+        # v.db.univar does not report the number of null values.
+        sql = f"select count(*) from {table} where {column} is null"
+        if where:
+            sql += f" and {where}"
+        nullStr = RunCommand(
             "db.select",
             parent=self.parent,
             read=True,
@@ -4127,18 +4071,29 @@ class FieldStatistics(wx.Frame):
             driver=driver,
             database=database,
         )
-        if not dataVar:
-            GWarning(
-                parent=self.parent, message=_("Unable to calculate standard deviation.")
-            )
-        varSum = 0
-        for var in decode(dataVar).splitlines():
-            if var:
-                varSum += float(var)
-        stddev = math.sqrt(varSum / count)
+        if not nullStr:
+            GError(parent=self.parent, message=_("Unable to calculate statistics."))
+            self.Close()
+            return
+
+        data = json.loads(dataStr)
+        # With no non-null values, v.db.univar reports n = 0 and null
+        # statistics nested under the statistics key only, not at the
+        # top level.
+        stats = data if "n" in data else data["statistics"]
 
         self.SetTitle(_("Field statistics <%s>") % column)
         self.text.Clear()
-        for idx in range(len(stats)):
-            self.text.AppendText("%s: %s\n" % (stats[idx], dataLines[idx]))
-        self.text.AppendText("stddev: %f\n" % stddev)
+        for label, key in (
+            ("count", "n"),
+            ("min", "min"),
+            ("max", "max"),
+            ("avg", "mean"),
+            ("sum", "sum"),
+        ):
+            self.text.AppendText("%s: %s\n" % (label, stats[key]))
+        self.text.AppendText("null: %s\n" % nullStr.strip())
+        stddev = stats["stddev"]
+        if stddev is not None:
+            stddev = "%f" % stddev
+        self.text.AppendText("stddev: %s\n" % stddev)
