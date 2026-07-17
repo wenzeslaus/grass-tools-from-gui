@@ -1,0 +1,122 @@
+<h2>DESCRIPTION</h2>
+
+<em>i.gcp.manage</em> manages the ground control points (GCPs) of an
+imagery group without a graphical session. The points are stored in
+the POINTS file of the group and are the same points used by
+<em>g.gui.gcp</em>, <em>m.transform</em>, and <em>i.rectify</em>, so
+the tool can prepare, inspect, and adjust points for image
+rectification in scripts.
+
+<p>
+The <b>operation</b> option selects what to do:
+
+<ul>
+<li><b>list</b> prints all points. In plain format, each line contains
+the point number, image east, image north, target east, target north,
+and status. JSON format (<b>format=json</b>) provides the same values
+as attributes.</li>
+<li><b>add</b> appends new active points. The
+<b>image_coordinates</b> and <b>target_coordinates</b> options each
+take one east,north pair per point and must contain the same number of
+pairs.</li>
+<li><b>remove</b> deletes the points given by the <b>points</b>
+option.</li>
+<li><b>enable</b> and <b>disable</b> set the status of the points
+given by the <b>points</b> option to 1 (used) or 0 (ignored) without
+deleting them.</li>
+<li><b>clear</b> removes all points from the group.</li>
+<li><b>rms</b> computes the forward and backward (reverse) error of
+every active point and the total forward and backward RMS error for
+the transformation of the given <b>order</b>. In plain format, each
+line contains the point number, forward error, and backward error,
+followed by a final <code>total</code> line; inactive points are
+skipped. JSON format includes all points, with <code>null</code>
+errors for inactive points.</li>
+</ul>
+
+<p>
+Points are numbered from 1 in the order in which they are stored,
+which is the same numbering <em>g.gui.gcp</em> displays. After
+<b>remove</b>, the remaining points are renumbered, so subsequent
+calls must use the new numbers as reported by <b>operation=list</b>.
+
+<h2>NOTES</h2>
+
+The points are stored in the text file
+<code>$GISDBASE/$PROJECT/$MAPSET/group/&lt;group&gt;/POINTS</code>.
+Comment lines start with <code>#</code>; every other line is one point
+given as image east, image north, target east, target north, and
+status (1 for used, 0 for ignored). <em>i.gcp.manage</em> writes the
+file in the exact format used by the GRASS imagery library, so the
+file stays interchangeable with <em>g.gui.gcp</em>,
+<em>m.transform</em>, and <em>i.rectify</em>.
+
+<p>
+The image coordinates are coordinates in the project (location) of the
+imagery group, typically an XY project holding the unreferenced image,
+while the target coordinates are coordinates in the target project set
+with <em>i.target</em>. <em>i.gcp.manage</em> itself does not require
+the target to be set. The group must be in the current mapset.
+
+<p>
+The per-point errors for <b>operation=rms</b> are computed by
+<em>m.transform</em>, and the total RMS errors are the square root of
+the mean of the squared per-point errors, matching both the
+<em>m.transform</em> summary output and the wxGUI GCP manager. A
+transformation of polynomial order 1, 2, or 3 requires at least 3, 6,
+or 10 active points respectively; with fewer active points,
+<b>operation=rms</b> ends with an error. Note that
+<em>i.rectify</em> has the same requirement.
+
+<p>
+The CONTROL_POINTS file used for 3D ground control points in
+orthophoto workflows (<em>g.gui.image2target</em>,
+<em>g.gui.photo2image</em>, <em>i.ortho.photo</em>) has a different
+format and is not supported; managing it is a possible future
+extension.
+
+<h2>EXAMPLES</h2>
+
+Create a group for an unreferenced image and add three points in one
+call (image coordinates 0,0 and 1000,0 and 0,1000):
+
+<div class="code"><pre>
+i.group group=scan input=scan
+i.gcp.manage group=scan operation=add \
+    image_coordinates=0,0,1000,0,0,1000 \
+    target_coordinates=635000,215000,637000,215000,635000,217000
+</pre></div>
+
+List the points as JSON:
+
+<div class="code"><pre>
+i.gcp.manage group=scan operation=list format=json
+</pre></div>
+
+Report per-point errors and the total RMS error for a first-order
+transformation:
+
+<div class="code"><pre>
+i.gcp.manage group=scan operation=rms order=1
+</pre></div>
+
+Ignore the second point without deleting it and remove the third one:
+
+<div class="code"><pre>
+i.gcp.manage group=scan operation=disable points=2
+i.gcp.manage group=scan operation=remove points=3
+</pre></div>
+
+<h2>SEE ALSO</h2>
+
+<em>
+<a href="g.gui.gcp.html">g.gui.gcp</a>,
+<a href="i.group.html">i.group</a>,
+<a href="i.rectify.html">i.rectify</a>,
+<a href="i.target.html">i.target</a>,
+<a href="m.transform.html">m.transform</a>
+</em>
+
+<h2>AUTHORS</h2>
+
+Vaclav Petras, NC State University, Center for Geospatial Analytics
