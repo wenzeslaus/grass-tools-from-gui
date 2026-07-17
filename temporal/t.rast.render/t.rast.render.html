@@ -1,0 +1,95 @@
+<h2>DESCRIPTION</h2>
+
+<em>t.rast.render</em> renders each raster map registered in a space time
+raster dataset (STRDS) as one image frame and exports the frames as an
+animated GIF, an AVI video, or a sequence of numbered PNG images. It
+provides a scripted, headless alternative to the export functionality of
+the wxGUI Animation tool (<em>g.gui.animation</em>).
+
+<p>
+The maps are rendered in the order of their start time using the current
+computation region, so use <em>g.region</em> to set the rendered extent
+and <em>r.colors</em> to set the color tables before running the tool.
+
+<p>
+The <b>format</b> option selects the output:
+
+<ul>
+<li><b>gif</b>: an animated GIF written to the file given by
+<b>output</b></li>
+<li><b>avi</b>: an AVI video (MPEG-4 codec) written to the file given by
+<b>output</b>; requires the <code>ffmpeg</code> command line tool</li>
+<li><b>frames</b>: a sequence of PNG images; <b>output</b> is used as a
+base name and frames are written as <code>&lt;output&gt;_001.png</code>,
+<code>&lt;output&gt;_002.png</code>, etc. (a trailing <code>.png</code>
+extension in <b>output</b> is dropped)</li>
+</ul>
+
+The <b>fps</b> option sets the number of frames per second for the gif
+and avi formats; it is ignored for frames. The <b>size</b> option sets
+the pixel dimensions of each frame. With the <b>-t</b> flag, the temporal
+extent of each map (start time, or start and end time for interval data)
+is drawn as a label near the bottom left corner of the frame. The
+<b>where</b> option limits the rendered maps with an SQL WHERE condition
+applied to the temporal database (e.g.,
+<code>start_time &gt;= '2020-01-01'</code>).
+
+<h2>NOTES</h2>
+
+Frames are rendered with <em>d.rast</em> using the cairo display driver;
+when the cairo driver is not available, the tool falls back to the PNG
+driver.
+
+<p>
+The gif and avi formats and the <b>-t</b> flag require the Python Imaging
+Library (Pillow). The avi format additionally requires
+<code>ffmpeg</code>. MP4 output is not supported directly; an MP4 video
+can be created from the frames format with <code>ffmpeg</code> (e.g.,
+<code>ffmpeg -r 5 -i basename_%03d.png output.mp4</code>).
+
+<p>
+This tool deliberately covers only a single STRDS rendered with
+<em>d.rast</em>. Multi-layer composition, legends, and other decorations
+available in <em>g.gui.animation</em> are out of scope; render such
+frames with custom scripting using the display tools instead.
+
+<h2>EXAMPLES</h2>
+
+Create an animated GIF from a precipitation time series with time stamp
+labels:
+
+<div class="code"><pre>
+g.region raster=precip_1 -p
+t.rast.render -t input=precipitation output=precipitation.gif fps=2
+</pre></div>
+
+Export an AVI video at a higher resolution:
+
+<div class="code"><pre>
+t.rast.render input=precipitation output=precipitation.avi format=avi \
+    size=1280,720 fps=10
+</pre></div>
+
+Export individual frames for one year only:
+
+<div class="code"><pre>
+t.rast.render input=precipitation output=frames/precip format=frames \
+    where="start_time &gt;= '2020-01-01' and start_time &lt; '2021-01-01'"
+</pre></div>
+
+<h2>SEE ALSO</h2>
+
+<em>
+<a href="d.rast.html">d.rast</a>,
+<a href="g.gui.animation.html">g.gui.animation</a>,
+<a href="r.out.mpeg.html">r.out.mpeg</a>,
+<a href="t.rast.colors.html">t.rast.colors</a>,
+<a href="t.rast.list.html">t.rast.list</a>
+</em>
+
+<h2>AUTHORS</h2>
+
+Vaclav Petras, NC State University, Center for Geospatial Analytics
+<p>
+Based on the export functionality of the wxGUI Animation tool by Anna
+Petrasova, Czech Technical University in Prague.

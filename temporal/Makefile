@@ -28,6 +28,7 @@ SUBDIRS = \
 	t.rast.series \
 	t.rast.export \
 	t.rast.out.vtk \
+	t.rast.render \
 	t.rast.import \
 	t.rast.gapfill \
 	t.rast.extract \
