@@ -962,7 +962,8 @@ class GMFrame(wx.Frame):
     def OnDone(self, event):
         """Command execution finished"""
         if hasattr(self, "model"):
-            self.model.DeleteIntermediateData(log=self._gconsole)
+            if self.model.GetDeleteIntermediateData():
+                self.model.DeleteIntermediateData(log=self._gconsole)
             del self.model
         self.SetStatusText("")
 
