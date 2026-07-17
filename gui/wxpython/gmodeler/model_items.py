@@ -43,7 +43,8 @@ from gui_core.wrap import IsDark
 class ModelObject:
     def __init__(self, id=-1, label=""):
         self.id = id  # internal id, should be not changed
-        self.label = ""
+        # some subclasses (e.g. ModelAction) pass None for no label
+        self.label = label or ""
         self.rels = []  # list of ModelRelations
 
         self.isEnabled = True

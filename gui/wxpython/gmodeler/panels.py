@@ -405,8 +405,9 @@ class ModelerPanel(wx.Panel, MainPageBase):
                 Path(finput).write_text(data)
             del self.model.fileInput
 
-        # delete intermediate data
-        self._deleteIntermediateData()
+        # delete intermediate data if requested in the run dialog
+        if self.model.GetDeleteIntermediateData():
+            self._deleteIntermediateData()
 
         # store resolved variables
         run_params = self.model.GetRunParams()
