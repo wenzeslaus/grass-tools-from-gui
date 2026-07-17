@@ -16,8 +16,8 @@ This program is free software under the GNU General Public License
 @author Anna Petrasova <kratochanna gmail.com>
 """
 
+import json
 import os
-import math
 import wx
 
 from core import units
@@ -196,7 +196,6 @@ class MeasureDistanceController(AnalysisControllerBase):
 
         self._projInfo = self._mapWindow.Map.projinfo
         self._totaldist = 0.0  # total measured distance
-        self._useCtypes = False
         self._graphicsType = "line"
 
     def _doAnalysis(self, coords):
@@ -254,28 +253,24 @@ class MeasureDistanceController(AnalysisControllerBase):
         else:
             self._giface.WriteCmdLog(_("Measuring distance:"))
 
-        if self._projInfo["proj"] == "ll":
-            try:
-                import grass.lib.gis as gislib
-
-                gislib.G_begin_distance_calculations()
-                self._useCtypes = True
-            except ImportError as e:
-                self._giface.WriteWarning(
-                    _("Geodesic distance calculation is not available.\nReason: %s") % e
-                )
-
     def MeasureDist(self, beginpt, endpt):
         """Calculate distance and print to output window.
 
         :param beginpt,endpt: EN coordinates
         """
-        # move also Distance method?
-        dist, (north, east) = self._mapWindow.Distance(beginpt, endpt, screen=False)
+        result = json.loads(
+            RunCommand(
+                "m.measure",
+                coordinates=f"{beginpt[0]},{beginpt[1]},{endpt[0]},{endpt[1]}",
+                format="json",
+                read=True,
+            )
+        )
 
-        dist = round(dist, 3)
+        dist = round(result["length"], 3)
         mapunits = self._projInfo["units"]
-        if mapunits == "degrees" and self._useCtypes:
+        if mapunits == "degrees":
+            # m.measure reports geodesic length in meters in lat-lon.
             mapunits = "meters"
         d, dunits = units.formatDist(dist, mapunits)
 
@@ -288,12 +283,9 @@ class MeasureDistanceController(AnalysisControllerBase):
         strtotdist = str(td)
 
         if self._projInfo["proj"] == "xy" or "degree" not in self._projInfo["unit"]:
-            angle = int(math.degrees(math.atan2(north, east)) + 0.5)
-            # uncomment below (or flip order of atan2(y,x) above) to use
-            #   the mathematical theta convention (CCW from +x axis)
-            # angle = 90 - angle
-            if angle < 0:
-                angle += 360
+            # Round to whole degrees for display; the modulo keeps bearings
+            # just below 360 from displaying as 360 instead of 0.
+            angle = int(result["bearings"][0] + 0.5) % 360
 
             mstring = "%s = %s %s\n%s = %s %s\n%s = %d %s\n%s" % (
                 _("segment"),
