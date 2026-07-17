@@ -26,7 +26,8 @@
 # % key: input
 # % type: string
 # % required: yes
-# % description: Name of OGR datasource to be imported
+# % multiple: yes
+# % description: Name of OGR datasource(s) to be imported
 # % gisprompt: old,datasource,datasource
 # % guisection: Input
 # %end
@@ -39,7 +40,8 @@
 # % gisprompt: old,datasource_layer,datasource_layer
 # %end
 # %option G_OPT_V_OUTPUT
-# % description: Name for output vector map (default: input)
+# % multiple: yes
+# % description: Name for output vector map(s) (default: input)
 # % required: no
 # % guisection: Output
 # %end
@@ -170,25 +172,20 @@ def fix_gfsfile(input):
             tree.write(gfsfile)
 
 
-def main():
+def derive_output_name(input_path):
+    """Derive a legal output map name from an input file path"""
+    return gs.legalize_vector_name(Path(input_path).stem)
+
+
+def import_single(OGRdatasource, output):
+    """Import one OGR datasource into the vector map named by *output*
+
+    An empty *output* preserves the original default where the name
+    is taken from the imported layer.
+    """
     global TMPLOC, SRCGISRC, TGTGISRC, GISDBASE
     overwrite = gs.overwrite()
 
-    # list formats and exit
-    if flags["f"]:
-        gs.run_command("v.in.ogr", flags="f")
-        return 0
-
-    # list layers and exit
-    if flags["l"]:
-        try:
-            gs.run_command("v.in.ogr", flags="l", input=options["input"])
-        except CalledModuleError:
-            return 1
-        return 0
-
-    OGRdatasource = options["input"]
-    output = options["output"]
     layers = options["layer"]
 
     vflags = ""
@@ -200,15 +197,6 @@ def main():
     vopts = {}
     if options["encoding"]:
         vopts["encoding"] = options["encoding"]
-
-    if options["datum_trans"] and options["datum_trans"] == "-1":
-        # list datum transform parameters
-        if not options["epsg"]:
-            gs.fatal(_("Missing value for parameter <%s>") % "epsg")
-
-        return gs.run_command(
-            "g.proj", epsg=options["epsg"], datum_trans=options["datum_trans"]
-        )
 
     if layers:
         vopts["layer"] = layers
@@ -396,6 +384,59 @@ def main():
     except CalledModuleError:
         gs.fatal(_("Unable to to reproject vector <%s>") % output)
 
+    return 0
+
+
+def main():
+    global TMPLOC, SRCGISRC, TGTGISRC, GISDBASE
+
+    # list formats and exit
+    if flags["f"]:
+        gs.run_command("v.in.ogr", flags="f")
+        return 0
+
+    inputs = options["input"].split(",")
+
+    # list layers and exit
+    if flags["l"]:
+        try:
+            for OGRdatasource in inputs:
+                gs.run_command("v.in.ogr", flags="l", input=OGRdatasource)
+        except CalledModuleError:
+            return 1
+        return 0
+
+    if options["datum_trans"] and options["datum_trans"] == "-1":
+        # list datum transform parameters
+        if not options["epsg"]:
+            gs.fatal(_("Missing value for parameter <%s>") % "epsg")
+
+        return gs.run_command(
+            "g.proj", epsg=options["epsg"], datum_trans=options["datum_trans"]
+        )
+
+    outputs = options["output"].split(",") if options["output"] else []
+    if outputs and len(outputs) != len(inputs):
+        gs.fatal(
+            _(
+                "The number of outputs ({num_outputs}) does not match "
+                "the number of inputs ({num_inputs})"
+            ).format(num_outputs=len(outputs), num_inputs=len(inputs))
+        )
+    if not outputs:
+        if len(inputs) == 1:
+            # Preserve the original behavior for a single input where the
+            # output name defaults to the name of the imported layer.
+            outputs = [""]
+        else:
+            outputs = [derive_output_name(name) for name in inputs]
+
+    for OGRdatasource, output in zip(inputs, outputs, strict=True):
+        import_single(OGRdatasource, output)
+        # Names of temporary elements are derived from the process ID, so they
+        # must be removed before the next import recreates them.
+        cleanup()
+        TMPLOC = SRCGISRC = TGTGISRC = GISDBASE = None
     return 0
 
 
