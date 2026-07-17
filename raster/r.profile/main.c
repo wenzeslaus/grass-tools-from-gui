@@ -21,6 +21,10 @@ struct Colors colors;
 static double dist, e, n;
 char *fs;
 
+/* Non-NULL when the -s flag requests statistics collection */
+struct ProfileStats *stats;
+static struct ProfileStats stats_storage;
+
 int main(int argc, char *argv[])
 {
     char *name, *outfile;
@@ -42,7 +46,7 @@ int main(int argc, char *argv[])
     struct {
         struct Option *opt1, *profile, *res, *output, *null_str, *coord_file,
             *units, *format, *color_format, *fs;
-        struct Flag *g, *c;
+        struct Flag *g, *c, *s;
     } parm;
     struct GModule *module;
     enum OutputFormat format;
@@ -102,6 +106,14 @@ int main(int argc, char *argv[])
         _("Output color values for each profile point (format controlled by "
           "color_format option; default is 'triplet' for plain output, 'hex' "
           "for JSON)");
+
+    parm.s = G_define_flag();
+    parm.s->key = 's';
+    parm.s->label = _("Print statistics of the sampled raster values");
+    parm.s->description =
+        _("Plain format prints only the statistics as key=value lines; "
+          "JSON format adds a statistics object to the output");
+    parm.s->guisection = _("Print");
 
     parm.units = G_define_standard_option(G_OPT_M_UNITS);
     parm.units->options = "meters,kilometers,feet,miles";
@@ -185,6 +197,13 @@ int main(int argc, char *argv[])
         G_message(_("Using resolution: %g [%s]"), res / factor, unit);
     }
 
+    if (parm.s->answer) {
+        if (format == CSV)
+            G_fatal_error(_("Statistics output (-s) is not supported with "
+                            "format=csv"));
+        stats = &stats_storage;
+    }
+
     fs = G_option_to_separator(parm.fs);
 
     if (clr) {
@@ -227,7 +246,7 @@ int main(int argc, char *argv[])
     data_type = Rast_get_map_type(fd);
     /* Done with file */
 
-    if (format == PLAIN) {
+    if (format == PLAIN && !stats) {
         /* Show message giving output format */
         G_message(_("Output columns:"));
         if (coords == 1)
@@ -314,21 +333,39 @@ int main(int argc, char *argv[])
     }
 
     if (format == JSON) {
+        G_JSON_Value *output_value = array_value;
+
+        if (stats) {
+            /* With statistics, the points array moves into a top-level
+               object next to the statistics. */
+            G_JSON_Value *root_value = G_json_value_init_object();
+            G_JSON_Object *root_object = G_json_object(root_value);
+
+            G_json_object_set_value(root_object, "points", array_value);
+            print_stats(stats, fp, format, root_object);
+            output_value = root_value;
+        }
+
         char *serialized_string =
-            G_json_serialize_to_string_pretty(array_value);
+            G_json_serialize_to_string_pretty(output_value);
         if (serialized_string == NULL) {
             G_fatal_error(_("Failed to initialize pretty JSON string."));
         }
         puts(serialized_string);
         G_json_free_serialized_string(serialized_string);
-        G_json_value_free(array_value);
+        G_json_value_free(output_value);
     }
+    else if (stats)
+        print_stats(stats, fp, format, NULL);
 
     Rast_close(fd);
     fclose(fp);
 
     if (clr)
         Rast_free_colors(&colors);
+
+    if (stats)
+        G_free(stats->values);
 
     exit(EXIT_SUCCESS);
 } /* Done with main */

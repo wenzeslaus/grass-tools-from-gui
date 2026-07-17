@@ -20,7 +20,8 @@ SUBDIRS = \
 	semantic_label \
 	temporal \
 	tools \
-	utils
+	utils \
+	web_services
 
 default: $(PYDIR)/__init__.py
 	$(MAKE) subdirs

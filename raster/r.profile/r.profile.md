@@ -29,6 +29,15 @@ the **color_format** option, which can be set to hex, triplet, rgb, or hsv
 color formats. The default color format is triplet for plain output, and hex
 for JSON output.
 
+The optional statistics output (with **-s**) provides statistics of the
+raster values sampled along the profile: number of non-null values (n),
+number of null values (nulls), minimum, maximum, range, mean, standard
+deviation, variance, coefficient of variation, sum, and median. With
+plain output, only the statistics are printed, as `key=value` lines.
+With JSON output, the result is an object with a `points` array (the
+profile points as without **-s**) and a `statistics` object. The **-s**
+flag is not supported with CSV output.
+
 ## NOTES
 
 The profile resolution is measured exactly from the supplied end or
@@ -48,6 +57,13 @@ Option **units** enables to set units of the profile length output. If
 the units are not specified, current coordinate reference system's units
 will be used. In case of geographic CRS (latitude/longitude), meters are
 used as default unit.
+
+The statistics output (**-s**) keeps all sampled non-null values in
+memory to compute the median. Profiles are typically small, but memory
+use grows with the number of profile points. The variance and the
+standard deviation are the population (not sample) statistics, and the
+coefficient of variation is the ratio of the standard deviation to the
+mean (only printed in plain format when the mean is not zero).
 
 ## EXAMPLES
 
@@ -160,6 +176,79 @@ The output looks as follows:
         "color": "#00F911"
     }
 ]
+```
+
+### Statistics of the profile values
+
+With plain output, the **-s** flag prints only the statistics of the
+sampled raster values:
+
+```sh
+r.profile -s input=elevation coordinates=641712,226095,641546,224138,641546,222048,641049,221186 resolution=1000
+```
+
+```text
+n=6
+nulls=0
+min=73.988029
+max=98.179062
+range=24.191032
+mean=84.684254
+stddev=7.700103
+variance=59.291588
+coeff_var=0.090927
+sum=508.105522
+median=84.149822
+```
+
+With JSON output, the statistics are added next to the profile points:
+
+```sh
+r.profile -s input=elevation coordinates=641712,226095,641546,224138,641546,222048,641049,221186 resolution=1000 format=json
+```
+
+```json
+{
+    "points": [
+        {
+            "distance": 0,
+            "value": 84.661506652832031
+        },
+        {
+            "distance": 1000.0000000000125,
+            "value": 98.179061889648438
+        },
+        {
+            "distance": 1964.0277492948007,
+            "value": 83.638137817382812
+        },
+        {
+            "distance": 2964.0277492948007,
+            "value": 89.141029357910156
+        },
+        {
+            "distance": 3964.0277492948007,
+            "value": 78.497756958007812
+        },
+        {
+            "distance": 4054.0277492948007,
+            "value": 73.988029479980469
+        }
+    ],
+    "statistics": {
+        "n": 6,
+        "nulls": 0,
+        "min": 73.988029479980469,
+        "max": 98.179061889648438,
+        "range": 24.191032409667969,
+        "mean": 84.684253692626953,
+        "stddev": 7.7001031130755448,
+        "variance": 59.291587951995702,
+        "coeff_var": 0.090927212289360418,
+        "sum": 508.10552215576172,
+        "median": 84.149822235107422
+    }
+}
 ```
 
 ### Using JSON output with Python for plotting data

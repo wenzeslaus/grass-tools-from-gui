@@ -17,7 +17,7 @@ This program is free software under the GNU General Public License
 
 import sys
 import math
-import numpy as np
+import json
 
 from pathlib import Path
 
@@ -281,6 +281,18 @@ class ProfileFrame(BasePlotFrame):
         else:
             self.ylabel = self.ylabel.rstrip(",")
 
+    def GetTransectResolution(self):
+        """Compute the sampling resolution for r.profile.
+
+        Keeps the total number of transect points to 500 or less to avoid
+        freezing with large, high resolution maps.
+        """
+        region = gs.region()
+        curr_res = min(float(region["nsres"]), float(region["ewres"]))
+        if self.transect_length / curr_res > 500:
+            return self.transect_length / 500
+        return curr_res
+
     def CreateDatalist(self, raster, coords):
         """Build a list of distance, value pairs for points along transect
 
@@ -288,14 +300,7 @@ class ProfileFrame(BasePlotFrame):
         """
         datalist = []
 
-        # keep total number of transect points to 500 or less to avoid
-        # freezing with large, high resolution maps
-        region = gs.region()
-        curr_res = min(float(region["nsres"]), float(region["ewres"]))
-        if self.transect_length / curr_res > 500:
-            transect_res = self.transect_length / 500
-        else:
-            transect_res = curr_res
+        transect_res = self.GetTransectResolution()
 
         ret = RunCommand(
             "r.profile",
@@ -469,23 +474,32 @@ class ProfileFrame(BasePlotFrame):
                 rast = r.split("@")[0]
                 statstr = "Profile of %s\n\n" % rast
 
-                iterable = (i[1] for i in self.raster[r]["datalist"])
-                a = np.fromiter(iterable, float)
+                result = RunCommand(
+                    "r.profile",
+                    parent=self,
+                    input=r,
+                    coordinates=self.coordstr,
+                    resolution=self.GetTransectResolution(),
+                    flags="s",
+                    format="json",
+                    quiet=True,
+                    read=True,
+                )
+                profile_stats = json.loads(result)["statistics"]
 
-                statstr += "n: %f\n" % a.size
-                statstr += "minimum: %f\n" % np.amin(a)
-                statstr += "maximum: %f\n" % np.amax(a)
-                statstr += "range: %f\n" % np.ptp(a)
-                statstr += "mean: %f\n" % np.mean(a)
-                statstr += "standard deviation: %f\n" % np.std(a)
-                statstr += "variance: %f\n" % np.var(a)
-                cv = np.std(a) / np.mean(a)
-                statstr += "coefficient of variation: %f\n" % cv
-                statstr += "sum: %f\n" % np.sum(a)
-                statstr += "median: %f\n" % np.median(a)
+                statstr += "n: %f\n" % profile_stats["n"]
+                statstr += "minimum: %f\n" % profile_stats["min"]
+                statstr += "maximum: %f\n" % profile_stats["max"]
+                statstr += "range: %f\n" % profile_stats["range"]
+                statstr += "mean: %f\n" % profile_stats["mean"]
+                statstr += "standard deviation: %f\n" % profile_stats["stddev"]
+                statstr += "variance: %f\n" % profile_stats["variance"]
+                statstr += "coefficient of variation: %f\n" % profile_stats["coeff_var"]
+                statstr += "sum: %f\n" % profile_stats["sum"]
+                statstr += "median: %f\n" % profile_stats["median"]
                 statstr += "distance along transect: %f\n\n" % self.transect_length
                 message.append(statstr)
-            except (ValueError, TypeError, KeyError, IndexError):
+            except (ValueError, TypeError, KeyError):
                 pass
 
         stats = PlotStatsFrame(self, id=wx.ID_ANY, message=message, title=title)

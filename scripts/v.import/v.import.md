@@ -8,6 +8,16 @@ project, the input is reprojected into the current project. In case that
 the CRS of the input map does match the CRS of the project, the input is
 imported directly.
 
+Multiple datasources can be given as a comma-separated list in the
+**input** option and they are imported one by one. The **output** option
+is optional: for a single input, the output name defaults to the name of
+the imported layer; for multiple inputs, the name of each output vector
+map is derived from the corresponding input file name (the directory
+part and the file extension are removed and remaining illegal characters
+are replaced by underscores). When **output** is given, the number of
+names must match the number of inputs. The **layer** option, if given,
+is applied to each datasource.
+
 ### Supported Vector Formats
 
 *v.import* uses the OGR library which supports various vector data
@@ -53,11 +63,17 @@ beyond repair.
 *v.clean*, using its tools *break,rmdupl,rmsa*. For details, refer to
 the *v.clean* manual page.
 
-## EXAMPLE
+## EXAMPLES
 
 ```sh
 # import SHAPE file at full extent and reproject to current project CRS
 v.import input=research_area.shp output=research_area extent=input
+```
+
+```sh
+# import two GeoJSON files at once; output names are derived from the
+# file names, creating vector maps "lakes" and "rivers"
+v.import input=lakes.geojson,rivers.geojson
 ```
 
 ## SEE ALSO

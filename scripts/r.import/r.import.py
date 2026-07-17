@@ -23,7 +23,8 @@
 # % keyword: projection
 # %end
 # %option G_OPT_F_BIN_INPUT
-# % description: Name of GDAL dataset to be imported
+# % multiple: yes
+# % description: Name of GDAL dataset(s) to be imported
 # % guisection: Input
 # %end
 # %option
@@ -37,7 +38,8 @@
 # %option G_OPT_MEMORYMB
 # %end
 # %option G_OPT_R_OUTPUT
-# % description: Name for output raster map
+# % multiple: yes
+# % description: Name for output raster map(s) (default: derived from input file name)
 # % required: no
 # % guisection: Output
 # %end
@@ -109,9 +111,6 @@
 # % label: Override projection check (use current project's CRS)
 # % description: Assume that the dataset has the same coordinate reference system (CRS) as the current project
 # %end
-# %rules
-# % required: output,-e
-# %end
 
 import sys
 import os
@@ -158,18 +157,20 @@ def is_projection_matching(GDALdatasource):
         return False
 
 
-def main():
+def derive_output_name(input_path):
+    """Derive a legal output map name from an input file path"""
+    return gs.legalize_vector_name(Path(input_path).stem)
+
+
+def import_single(GDALdatasource, output):
+    """Import one GDAL dataset into the raster map named by *output*"""
     global TMPLOC, SRCGISRC, GISDBASE, TMP_REG_NAME
 
-    GDALdatasource = options["input"]
-    output = options["output"]
     method = options["resample"]
     memory = options["memory"]
     bands = options["band"]
     tgtres = options["resolution"]
     title = options["title"]
-    if flags["e"] and not output:
-        output = "rimport_tmp"  # will be removed with the entire tmp location
     if options["resolution_value"]:
         if tgtres != "value":
             gs.fatal(
@@ -472,6 +473,30 @@ def main():
 
     # TODO: write metadata with r.support
 
+    return 0
+
+
+def main():
+    global TMPLOC, SRCGISRC, GISDBASE, TMP_REG_NAME
+
+    inputs = options["input"].split(",")
+    outputs = options["output"].split(",") if options["output"] else []
+    if outputs and len(outputs) != len(inputs):
+        gs.fatal(
+            _(
+                "The number of outputs ({num_outputs}) does not match "
+                "the number of inputs ({num_inputs})"
+            ).format(num_outputs=len(outputs), num_inputs=len(inputs))
+        )
+    if not outputs:
+        outputs = [derive_output_name(name) for name in inputs]
+
+    for GDALdatasource, output in zip(inputs, outputs, strict=True):
+        import_single(GDALdatasource, output)
+        # Names of temporary elements are derived from the process ID, so they
+        # must be removed before the next import recreates them.
+        cleanup()
+        TMPLOC = SRCGISRC = GISDBASE = TMP_REG_NAME = None
     return 0
 
 

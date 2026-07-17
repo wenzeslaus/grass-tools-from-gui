@@ -28,7 +28,6 @@ try:
 except ImportError:
     import wx.lib.flatnotebook as FN
 
-import grass.script as gs
 from core import globalvar
 from core.gcmd import GError, GMessage, RunCommand
 from core.gconsole import EVT_CMD_DONE, CmdThread
@@ -42,6 +41,7 @@ from gui_core.toolbars import ToolSwitcher
 from gui_core.widgets import GNotebook
 from gui_core.wrap import ClientDC, EmptyBitmap, PseudoDC, Rect, StockCursor
 
+import grass.script as gs
 from psmap.dialogs import (
     ImageDialog,
     LabelsDialog,
@@ -57,7 +57,7 @@ from psmap.dialogs import (
     ScalebarDialog,
     TextDialog,
 )
-from psmap.instructions import InitMap, Instruction, NewId, SetResolution, PageSetup
+from psmap.instructions import InitMap, Instruction, NewId, PageSetup, SetResolution
 from psmap.menudata import PsMapMenuData
 from psmap.toolbars import PsMapToolbar
 from psmap.utils import (
@@ -332,22 +332,7 @@ class PsMapFrame(wx.Frame):
         GUI(parent=self).ParseCommand(cmd=["ps.map"])
 
     def OnPDFFile(self, event):
-        """Generate PDF from PS with ps2pdf if available"""
-        if sys.platform != "win32":
-            try:
-                p = gs.Popen(["ps2pdf"], stderr=gs.PIPE)
-                p.stderr.close()
-
-            except OSError:
-                GMessage(
-                    parent=self,
-                    message=_(
-                        "Program ps2pdf is not available. Please install it first to "
-                        "create PDF."
-                    ),
-                )
-                return
-
+        """Generate PDF"""
         filename = self.getFile(wildcard="PDF (*.pdf)|*.pdf")
         if filename:
             self.PSFile(filename, pdf=True)
@@ -357,7 +342,11 @@ class PsMapFrame(wx.Frame):
         self.PSFile()
 
     def PSFile(self, filename=None, pdf=False):
-        """Create temporary instructions file and run ps.map with output = filename"""
+        """Create temporary instructions file and render it
+
+        Export to filename (PS, EPS, or PDF) runs ps.render; the preview
+        (no filename) runs ps.map directly.
+        """
         instrFile = gs.tempfile()
         with open(instrFile, mode="wb") as instrFileFd:
             content = self.InstructionFile()
@@ -369,24 +358,27 @@ class PsMapFrame(wx.Frame):
         temp = False
         regOld = gs.region(env=self.env)
 
-        pdfname = filename if pdf else None
-        # preview or pdf
-        if not filename or (filename and pdf):
+        if filename:
+            if pdf:
+                fmt = "pdf"
+            elif os.path.splitext(filename)[1] == ".eps":
+                fmt = "eps"
+            else:
+                fmt = "ps"
+            cmd = ["ps.render", "--overwrite", "format=%s" % fmt]
+        else:
             temp = True
             filename = gs.tempfile()
-            if not pdf:  # lower resolution for preview
-                if self.instruction.FindInstructionByType("map"):
-                    mapId = self.instruction.FindInstructionByType("map").id
-                    SetResolution(
-                        dpi=100,
-                        width=self.instruction[mapId]["rect"][2],
-                        height=self.instruction[mapId]["rect"][3],
-                        env=self.env,
-                    )
-
-        cmd = ["ps.map", "--overwrite"]
-        if os.path.splitext(filename)[1] == ".eps":
-            cmd.append("-e")
+            # lower resolution for preview
+            if self.instruction.FindInstructionByType("map"):
+                mapId = self.instruction.FindInstructionByType("map").id
+                SetResolution(
+                    dpi=100,
+                    width=self.instruction[mapId]["rect"][2],
+                    height=self.instruction[mapId]["rect"][3],
+                    env=self.env,
+                )
+            cmd = ["ps.map", "--overwrite"]
         if self.instruction[self.pageId]["Orientation"] == "Landscape":
             cmd.append("-r")
         cmd.extend(("input=%s" % instrFile, "output=%s" % filename))
@@ -403,19 +395,20 @@ class PsMapFrame(wx.Frame):
             userData={
                 "instrFile": instrFile,
                 "filename": filename,
-                "pdfname": pdfname,
+                "pdf": pdf,
                 "temp": temp,
                 "regionOld": regOld,
             },
         )
 
     def OnCmdDone(self, event):
-        """ps.map process finished"""
+        """Rendering process finished"""
 
         if event.returncode != 0:
             GMessage(
                 parent=self,
-                message=_("Ps.map exited with return code %s") % event.returncode,
+                message=_("%(prg)s exited with return code %(code)s")
+                % {"prg": event.cmd[0], "code": event.returncode},
             )
 
             gs.try_remove(event.userData["instrFile"])
@@ -423,85 +416,13 @@ class PsMapFrame(wx.Frame):
                 gs.try_remove(event.userData["filename"])
             return
 
-        if event.userData["pdfname"]:
-            if sys.platform == "win32":
-                import platform
-
-                arch = platform.architecture()[0]
-                pdf_rendering_prog = "gswin64c"
-                if "32" in arch:
-                    pdf_rendering_prog = "gswin32c"
-                command = [
-                    pdf_rendering_prog,
-                    "-P-",
-                    "-dSAFER",
-                    "-dCompatibilityLevel=1.4",
-                    "-q",
-                    "-P-",
-                    "-dNOPAUSE",
-                    "-dBATCH",
-                    "-sDEVICE=pdfwrite",
-                    "-dPDFSETTINGS=/prepress",
-                    "-r1200",
-                    "-sstdout=%stderr",
-                    "-sOutputFile=%s" % event.userData["pdfname"],
-                    "-P-",
-                    "-dSAFER",
-                    "-dCompatibilityLevel=1.4",
-                    "-c",
-                    "30000000",
-                    "setvmthreshold",
-                    "-f",
-                    event.userData["filename"],
-                ]
-                title = _("Program {} is not available.").format(pdf_rendering_prog)
-                message = _("{title} Please install it to create PDF.\n\n").format(
-                    title=title
-                )
-            else:
-                pdf_rendering_prog = "ps2pdf"
-                command = [
-                    pdf_rendering_prog,
-                    "-dPDFSETTINGS=/prepress",
-                    "-r1200",
-                    event.userData["filename"],
-                    event.userData["pdfname"],
-                ]
-                message = _(
-                    "Program {} is not available. Please install it to create PDF.\n\n "
-                ).format(pdf_rendering_prog)
-            try:
-                proc = gs.Popen(command)
-                ret = proc.wait()
-                if ret > 0:
-                    GMessage(
-                        parent=self,
-                        message=_("%(prg)s exited with return code %(code)s")
-                        % {"prg": command[0], "code": ret},
-                    )
-                else:
-                    self.SetStatusText(_("PDF generated"), 0)
-            except OSError as e:
-                if sys.platform == "win32":
-                    dlg = HyperlinkDialog(
-                        self,
-                        title=title,
-                        message=message + str(e),
-                        hyperlink="https://www.ghostscript.com/releases/gsdnld.html",
-                        hyperlinkLabel=_("You can download {} version here.").format(
-                            arch
-                        ),
-                    )
-                    dlg.ShowModal()
-                    dlg.Destroy()
-                    return
-                GError(parent=self, message=message + str(e))
-
+        if event.userData["pdf"]:
+            self.SetStatusText(_("PDF generated"), 0)
         elif not event.userData["temp"]:
             self.SetStatusText(_("PostScript file generated"), 0)
 
         # show preview only when user doesn't want to create ps or pdf
-        if havePILImage and event.userData["temp"] and not event.userData["pdfname"]:
+        if havePILImage and event.userData["temp"]:
             self.env["GRASS_REGION"] = gs.region_env(
                 cols=event.userData["regionOld"]["cols"],
                 rows=event.userData["regionOld"]["rows"],

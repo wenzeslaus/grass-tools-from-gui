@@ -21,16 +21,21 @@ set(script_DIRS
     g.extension
     g.extension.all
     g.manual
+    g.model.export
+    g.model.run
     g.search.modules
     i.band.library
     i.colors.enhance
+    i.gcp.manage
     i.image.mosaic
     i.in.spotvgt
     i.oif
     i.pansharpen
+    i.scatter
     i.spectral
     i.tasscap
     m.proj
+    ps.render
     r.blend
     r.buffer.lowmem
     r.colors.stddev
@@ -41,6 +46,7 @@ set(script_DIRS
     r.in.aster
     r.in.srtm
     r.in.wms
+    r.li.config
     r.mapcalc.simple
     r.mask
     r.out.xyz
@@ -56,8 +62,10 @@ set(script_DIRS
     v.build.all
     v.centroids
     v.clip
+    v.create
     v.db.addcolumn
     v.db.addtable
+    v.db.copyatts
     v.db.dropcolumn
     v.db.droprow
     v.db.droptable
@@ -135,10 +143,6 @@ add_custom_target(
           ${OUTDIR}/${GRASS_INSTALL_ETCBINDIR}/r.in.wms
   COMMAND
     ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_SOURCE_DIR}/r.in.wms/wms_base.py
-    ${OUTDIR}/${GRASS_INSTALL_ETCBINDIR}/r.in.wms
-  COMMAND
-    ${CMAKE_COMMAND} -E copy
-    ${CMAKE_CURRENT_SOURCE_DIR}/r.in.wms/wms_cap_parsers.py
     ${OUTDIR}/${GRASS_INSTALL_ETCBINDIR}/r.in.wms
   COMMAND
     ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_SOURCE_DIR}/r.in.wms/wms_drv.py

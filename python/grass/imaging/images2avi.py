@@ -42,6 +42,7 @@ import os
 import time
 import subprocess
 import shutil
+import tempfile
 from pathlib import Path
 
 from grass.imaging import images2ims
@@ -100,8 +101,8 @@ def writeAvi(
     except Exception:
         raise ValueError(_("Invalid duration parameter for writeAvi."))
 
-    # Determine temp dir and create images
-    tempDir = os.path.join(os.path.expanduser("~"), ".tempIms")
+    # Create temp dir and write images there
+    tempDir = tempfile.mkdtemp(prefix="grass_imaging_")
     images2ims.writeIms(os.path.join(tempDir, "im*.png"), images)
 
     # Determine formatter
@@ -172,15 +173,14 @@ def readAvi(filename, asNumpy=True):
     if not Path(filename).is_file():
         raise OSError("File not found: " + str(filename))
 
-    # Determine temp dir, make sure it exists
-    tempDir = os.path.join(os.path.expanduser("~"), ".tempIms")
-    Path(tempDir).mkdir(parents=True, exist_ok=True)
+    # Create temp dir
+    tempDir = tempfile.mkdtemp(prefix="grass_imaging_")
 
     # Copy movie there
     shutil.copy(filename, os.path.join(tempDir, "input.avi"))
 
     # Run ffmpeg
-    command = "ffmpeg -i input.avi im%d.jpg"
+    command = ["ffmpeg", "-i", "input.avi", "im%d.jpg"]
     with subprocess.Popen(
         command,
         cwd=tempDir,

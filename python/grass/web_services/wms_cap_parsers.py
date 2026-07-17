@@ -1,27 +1,28 @@
-"""!
-@brief Parsers for WMS/WMTS/NASA OnEarth capabilities files.
+# MODULE:    grass.web_services.wms_cap_parsers
+#
+# AUTHOR(S): Stepan Turek <stepan.turek seznam.cz> (Mentor: Martin Landa)
+#
+# PURPOSE:   Parsers for WMS/WMTS/NASA OnEarth capabilities documents
+#
+# COPYRIGHT: (C) 2012 by the GRASS Development Team
+#
+#            This program is free software under the GNU General Public
+#            License (>=v2). Read the file COPYING that comes with GRASS
+#            for details.
 
-List of classes:
- - wms_cap_parsers::BaseCapabilitiesTree
- - wms_cap_parsers::WMSXMLNsHandler
- - wms_cap_parsers::WMSCapabilitiesTree
- - wms_cap_parsers::WMTSXMLNsHandler
- - wms_cap_parsers::WMTSCapabilitiesTree
- - wms_cap_parsers::OnEarthCapabilitiesTree
+"""Parse and validate WMS, WMTS, and NASA OnEarth capabilities documents
 
-(C) 2012 by the GRASS Development Team
-
-This program is free software under the GNU General Public License
-(>=v2). Read the file COPYING that comes with GRASS for details.
-
-@author Stepan Turek <stepan.turek seznam.cz> (Mentor: Martin Landa)
+Each capabilities tree is an ``xml.etree.ElementTree.ElementTree`` subclass
+which accepts a file path or an XML string, checks the document structure,
+and removes elements which are in a form invalid for r.in.wms and the wxGUI
+web services dialog. Parsing failures raise
+``xml.etree.ElementTree.ParseError``.
 """
 
+import xml.etree.ElementTree as ET
 from pathlib import Path
-
 from xml.etree.ElementTree import ParseError
 
-import xml.etree.ElementTree as ET
 import grass.script as gs
 
 

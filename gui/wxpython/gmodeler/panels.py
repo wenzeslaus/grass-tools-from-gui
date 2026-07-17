@@ -41,9 +41,9 @@ else:
     import wx.lib.flatnotebook as FN
 from wx.lib.newevent import NewEvent
 
-from core.gconsole import GConsole, EVT_CMD_RUN, EVT_CMD_DONE, EVT_CMD_PREPARE
+from core.gconsole import GConsole, EVT_CMD_RUN, EVT_CMD_DONE
 from core.debug import Debug
-from core.gcmd import GMessage, GException, GWarning, GError
+from core.gcmd import GMessage, GException, GWarning, GError, RunCommand
 from core.settings import UserSettings
 from core.giface import Notification, StandaloneGrassInterface
 
@@ -179,7 +179,6 @@ class ModelerPanel(wx.Panel, MainPageBase):
         self.Bind(EVT_CMD_RUN, self.OnCmdRun)
         # rewrite default method to avoid hiding progress bar
         self._gconsole.Bind(EVT_CMD_DONE, self.OnCmdDone)
-        self.Bind(EVT_CMD_PREPARE, self.OnCmdPrepare)
         self.Bind(EVT_MODEL_DONE, self.OnModelDone)
 
         self.notebook.AddPage(page=self.canvas, text=_("Model"), name="model")
@@ -297,13 +296,6 @@ class ModelerPanel(wx.Panel, MainPageBase):
         except IndexError:
             pass
 
-    def OnCmdPrepare(self, event):
-        """Prepare for running command"""
-        if not event.userData:
-            return
-
-        event.onPrepare(item=event.userData["item"], params=event.userData["params"])
-
     def OnCmdDone(self, event):
         """Command done (or aborted)"""
 
@@ -395,18 +387,10 @@ class ModelerPanel(wx.Panel, MainPageBase):
         """Computation finished"""
         self.SetStatusText("", 0)
 
-        # restore original files
-        if hasattr(self.model, "fileInput"):
-            for finput in self.model.fileInput:
-                data = self.model.fileInput[finput]
-                if not data:
-                    continue
-
-                Path(finput).write_text(data)
-            del self.model.fileInput
-
-        # delete intermediate data
-        self._deleteIntermediateData()
+        # remove temporary model file used by g.model.run
+        if hasattr(self.model, "runModelFile"):
+            try_remove(self.model.runModelFile)
+            del self.model.runModelFile
 
         # store resolved variables
         run_params = self.model.GetRunParams()
@@ -976,7 +960,7 @@ class ModelerPanel(wx.Panel, MainPageBase):
     def OnRunModel(self, event):
         """Run entire model"""
         self.start_time = time.time()
-        self.model.Run(self._gconsole, self.OnModelDone, parent=self)
+        self.model.Run(self._gconsole, parent=self)
 
     def OnExportImage(self, event):
         """Export model to image (default image)"""
@@ -1684,6 +1668,33 @@ class PythonPanel(wx.Panel):
             # script_type == "Python", fallback
             self.write_object = ModelToPython
 
+    def _getPythonScriptFromTool(self):
+        """Generate the Python script by running g.model.export.
+
+        The tool generates grass.script code equivalent to ModelToPython
+        and additionally exports loops, comments out disabled actions,
+        keeps text preceding a variable reference in option values, and
+        removes multiple intermediate maps without a syntax error.
+
+        :return: script text, or None when the tool reported an error
+        """
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            model_file = os.path.join(tmp_dir, "model.gxm")
+            script_file = os.path.join(tmp_dir, "script.py")
+            with open(model_file, "w") as fd:
+                WriteModelFile(fd=fd, model=self.parent.GetModel())
+            ret = RunCommand(
+                "g.model.export",
+                parent=self,
+                input=model_file,
+                output=script_file,
+                format="python",
+            )
+            if ret != 0:
+                # RunCommand already showed the tool error to the user.
+                return None
+            return Path(script_file).read_text()
+
     def RefreshScript(self):
         """Refresh the script.
 
@@ -1719,14 +1730,23 @@ class PythonPanel(wx.Panel):
         else:
             grassAPIStr = "tools"
 
-        with tempfile.TemporaryFile(mode="r+") as fd:
-            self.write_object(
-                fd,
-                self.parent.GetModel(),
-                grassAPI=grassAPIStr,
-            )
-            fd.seek(0)
-            self.body.SetText(fd.read())
+        if self.write_object == ModelToPython and grassAPIStr == "script":
+            # The g.model.export tool covers the grass.script variant of
+            # the Python export; pygrass and tools variants are not
+            # supported by the tool yet.
+            script = self._getPythonScriptFromTool()
+            if script is None:
+                return False
+            self.body.SetText(script)
+        else:
+            with tempfile.TemporaryFile(mode="r+") as fd:
+                self.write_object(
+                    fd,
+                    self.parent.GetModel(),
+                    grassAPI=grassAPIStr,
+                )
+                fd.seek(0)
+                self.body.SetText(fd.read())
 
         self.body.modified = False
 
@@ -1779,8 +1799,18 @@ class PythonPanel(wx.Panel):
 
             dlg.Destroy()
 
+        script = None
+        if force and self.write_object == ModelToPython:
+            # The tool generates grass.script code, matching the previous
+            # ModelToPython default API.
+            script = self._getPythonScriptFromTool()
+            if script is None:
+                return ""
+
         with open(filename, "w") as fd:
-            if force:
+            if script is not None:
+                fd.write(script)
+            elif force:
                 self.write_object(fd, self.parent.GetModel())
             else:
                 fd.write(self.body.GetText())

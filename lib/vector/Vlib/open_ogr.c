@@ -189,11 +189,19 @@ int V1_open_new_ogr(struct Map_info *Map, const char *name, int with_z)
     }
     ogr_info->driver = Ogr_driver;
 
-    /* TODO: creation options */
-    Ogr_ds = OGR_Dr_CreateDataSource(Ogr_driver, ogr_info->dsn, NULL);
+    /* Open an existing datasource for update and only create a new
+       one if that fails. Recreating an existing datasource would
+       delete its already existing layers in single-file formats such
+       as GeoPackage. */
+    Ogr_ds = OGR_Dr_Open(Ogr_driver, ogr_info->dsn, TRUE);
     if (!Ogr_ds) {
-        G_warning(_("Unable to create OGR data source '%s'"), ogr_info->dsn);
-        return -1;
+        /* TODO: creation options */
+        Ogr_ds = OGR_Dr_CreateDataSource(Ogr_driver, ogr_info->dsn, NULL);
+        if (!Ogr_ds) {
+            G_warning(_("Unable to create OGR data source '%s'"),
+                      ogr_info->dsn);
+            return -1;
+        }
     }
     ogr_info->ds = Ogr_ds;
 

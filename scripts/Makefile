@@ -23,16 +23,21 @@ SUBDIRS = \
 	g.extension \
 	g.extension.all \
 	g.manual \
+	g.model.export \
+	g.model.run \
 	g.search.modules \
 	i.band.library \
 	i.colors.enhance \
+	i.gcp.manage \
 	i.image.mosaic \
 	i.in.spotvgt \
 	i.oif \
 	i.pansharpen \
+	i.scatter \
 	i.spectral \
 	i.tasscap \
 	m.proj \
+	ps.render \
 	r.blend \
 	r.buffer.lowmem \
 	r.colors.stddev \
@@ -43,6 +48,7 @@ SUBDIRS = \
 	r.in.aster \
 	r.in.srtm \
 	r.in.wms \
+	r.li.config \
 	r.mapcalc.simple \
 	r.mask \
 	r.out.xyz \
@@ -58,8 +64,10 @@ SUBDIRS = \
 	v.build.all \
 	v.centroids \
 	v.clip \
+	v.create \
 	v.db.addcolumn \
 	v.db.addtable \
+	v.db.copyatts \
 	v.db.join \
 	v.db.dropcolumn \
 	v.db.droprow \

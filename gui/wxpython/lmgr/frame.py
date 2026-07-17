@@ -831,13 +831,6 @@ class GMFrame(wx.Frame):
         win.CentreOnScreen()
         win.Show()
 
-    def OnDone(self, event):
-        """Command execution finished"""
-        if hasattr(self, "model"):
-            self.model.DeleteIntermediateData(log=self._gconsole)
-            del self.model
-        self.SetStatusText("")
-
     def OnRunModel(self, event):
         """Run model"""
         filename = ""
@@ -856,9 +849,9 @@ class GMFrame(wx.Frame):
 
         from gmodeler.model import Model
 
-        self.model = Model()
-        self.model.LoadModel(filename)
-        self.model.Run(log=self.GetLogWindow(), onDone=self.OnDone, parent=self)
+        model = Model()
+        model.LoadModel(filename)
+        model.Run(log=self.GetLogWindow(), parent=self)
         dlg.Destroy()
 
     def OnMapsets(self, event):
@@ -1438,7 +1431,7 @@ class GMFrame(wx.Frame):
     def OnNewVector(self, event):
         """Create new vector map layer"""
         dlg = CreateNewVector(
-            self, giface=self._giface, cmd=(("v.edit", {"tool": "create"}, "map"))
+            self, giface=self._giface, cmd=(("v.create", {}, "output"))
         )
 
         if not dlg:

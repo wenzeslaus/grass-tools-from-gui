@@ -21,6 +21,7 @@ This program is free software under the GNU General Public License
 @author William Welch <ww.dev icloud.com> (commands running queue)
 """
 
+import json
 import os
 from collections import deque
 
@@ -321,45 +322,56 @@ class ImportDialog(wx.Dialog):
         if not self.add.IsChecked() or returncode != 0:
             return
 
-        # TODO: if importing map creates more map the following does not work
-        # * do nothing if map does not exist or
-        # * try to determine names using regexp or
-        # * persuade import tools to report map names
-        self.commandId += 1
-        layer, output = self.list.GetLayers()[self.commandId][:2]
-
-        name = output + "@" + grass.gisenv()["MAPSET"] if "@" not in output else output
+        if userData and "outputs" in userData:
+            # one command importing all outputs (raster and vector import)
+            outputs = userData["outputs"]
+            band_counts = userData.get("nbands")
+        else:
+            # one output per command, identified by completion order (DXF import)
+            # TODO: if importing map creates more map the following does not work
+            # * do nothing if map does not exist or
+            # * try to determine names using regexp or
+            # * persuade import tools to report map names
+            self.commandId += 1
+            outputs = [self.list.GetLayers()[self.commandId][1]]
+            band_counts = None
+        if not band_counts:
+            band_counts = [1] * len(outputs)
 
         # add imported layers into layer tree
         # an alternative would be emit signal (mapCreated) and (optionally)
         # connect to this signal
         llist = self._giface.GetLayerList()
-        if self.importType == "gdal":
-            nBands = int(userData.get("nbands", 1)) if userData else 1
-
-            nFlag = bool(
-                UserSettings.Get(group="rasterLayer", key="opaque", subkey="enabled")
+        for output, nBands in zip(outputs, band_counts, strict=True):
+            name = (
+                output + "@" + grass.gisenv()["MAPSET"] if "@" not in output else output
             )
-            for i in range(1, nBands + 1):
-                nameOrig = name
-                if nBands > 1:
-                    mapName, mapsetName = name.split("@")
-                    mapName += ".%d" % i
-                    name = mapName + "@" + mapsetName
+            if self.importType == "gdal":
+                nFlag = bool(
+                    UserSettings.Get(
+                        group="rasterLayer", key="opaque", subkey="enabled"
+                    )
+                )
+                for i in range(1, nBands + 1):
+                    nameOrig = name
+                    if nBands > 1:
+                        mapName, mapsetName = name.split("@")
+                        mapName += ".%d" % i
+                        name = mapName + "@" + mapsetName
 
-                cmd = ["d.rast", "map=%s" % name]
-                if nFlag:
-                    cmd.append("-n")
+                    cmd = ["d.rast", "map=%s" % name]
+                    if nFlag:
+                        cmd.append("-n")
 
-                llist.AddLayer(ltype="raster", name=name, checked=True, cmd=cmd)
-                name = nameOrig
-        else:
-            llist.AddLayer(
-                ltype="vector",
-                name=name,
-                checked=True,
-                cmd=["d.vect", "map=%s" % name] + GetDisplayVectSettings(),
-            )
+                    llist.AddLayer(ltype="raster", name=name, checked=True, cmd=cmd)
+                    name = nameOrig
+            else:
+                llist.AddLayer(
+                    ltype="vector",
+                    name=name,
+                    checked=True,
+                    cmd=["d.vect", "map=%s" % name] + GetDisplayVectSettings(),
+                )
 
         self._giface.GetMapWindow().ZoomToMap()
 
@@ -466,7 +478,6 @@ class GdalImportDialog(ImportDialog):
 
     def OnRun(self, event):
         """Import/Link data (each layes as separate vector map)"""
-        self.commandId = -1
         data = self.list.GetLayers()
 
         data = self._getLayersToReprojetion(2, 3)
@@ -485,9 +496,10 @@ class GdalImportDialog(ImportDialog):
         if not dsn:
             return
 
+        inputs = []
+        outputs = []
+        band_counts = []
         for layer, output, listId in data:
-            userData = {}
-
             if self.dsnInput.GetType() == "dir":
                 idsn = os.path.join(dsn, layer)
             elif self.dsnInput.GetType() == "db":
@@ -525,10 +537,29 @@ class GdalImportDialog(ImportDialog):
                 GWarning(_("Unable to determine number of raster bands"), parent=self)
                 nBands = 1
 
-            userData["nbands"] = nBands
+            inputs.append(idsn)
+            outputs.append(output)
+            band_counts.append(nBands)
+
+        if self.link or any("," in idsn for idsn in inputs):
+            # r.external accepts only a single input, and a datasource string
+            # containing a comma (e.g., RASTERLITE:...,table=...) cannot be
+            # part of a comma-separated value list, so run one command per
+            # input in these cases.
+            commands = [
+                ([idsn], [output], [nBands])
+                for idsn, output, nBands in zip(
+                    inputs, outputs, band_counts, strict=True
+                )
+            ]
+        else:
+            # Import all inputs with a single multi-input r.import command.
+            commands = [(inputs, outputs, band_counts)]
+
+        for cmd_inputs, cmd_outputs, cmd_band_counts in commands:
             cmd = self.getSettingsPageCmd()
-            cmd.append("input=%s" % idsn)
-            cmd.append("output=%s" % output)
+            cmd.append("input=%s" % ",".join(cmd_inputs))
+            cmd.append("output=%s" % ",".join(cmd_outputs))
 
             if self.override.IsChecked():
                 cmd.append("-o")
@@ -545,7 +576,10 @@ class GdalImportDialog(ImportDialog):
             self._addToCommandQueue()
             # run in Layer Manager
             self._giface.RunCmd(
-                cmd, onDone=self.OnCmdDone, userData=userData, addLayer=False
+                cmd,
+                onDone=self.OnCmdDone,
+                userData={"outputs": cmd_outputs, "nbands": cmd_band_counts},
+                addLayer=False,
             )
 
     def OnCmdDone(self, event):
@@ -630,7 +664,6 @@ class OgrImportDialog(ImportDialog):
 
     def OnRun(self, event):
         """Import/Link data (each layes as separate vector map)"""
-        self.commandId = -1
         data = self.list.GetLayers()
 
         data = self._getLayersToReprojetion(3, 4)
@@ -664,18 +697,52 @@ class OgrImportDialog(ImportDialog):
             self.popOGR = True
             os.environ["GRASS_VECTOR_OGR"] = "1"
 
+        layers = []
         for layer, output, listId in data:
-            userData = {}
-
             if ext and layer.rfind(ext) > -1:
                 layer = layer.replace("." + ext, "")
             if "|" in layer:
                 layer = layer.split("|", 1)[0]
+            layers.append((layer, output))
 
+        # Rows of a directory source are separate files, each a complete OGR
+        # datasource, so they can go into a single multi-input v.import
+        # command. Rows of the other source types are layers of one
+        # datasource and need a distinct layer= value per command, and
+        # v.external accepts only a single input; those run one command per
+        # layer as before. Paths containing a comma cannot be part of a
+        # comma-separated value list, and a file name that cannot be
+        # reconstructed from layer name and extension cannot be its own
+        # datasource; both fall back to one command per layer.
+        input_paths = None
+        if not self.link and self.dsnInput.GetType() == "dir" and ext:
+            paths = [os.path.join(dsn, layer + "." + ext) for layer, output in layers]
+            if all("," not in path and Path(path).exists() for path in paths):
+                input_paths = paths
+
+        if input_paths:
+            outputs = [output for layer, output in layers]
+            commands = [
+                (
+                    [
+                        "input=%s" % ",".join(input_paths),
+                        "output=%s" % ",".join(outputs),
+                    ],
+                    outputs,
+                )
+            ]
+        else:
+            commands = [
+                (
+                    ["input=%s" % dsn, "layer=%s" % layer, "output=%s" % output],
+                    [output],
+                )
+                for layer, output in layers
+            ]
+
+        for parameters, cmd_outputs in commands:
             cmd = self.getSettingsPageCmd()
-            cmd.append("input=%s" % dsn)
-            cmd.append("layer=%s" % layer)
-            cmd.append("output=%s" % output)
+            cmd.extend(parameters)
 
             if self.override.IsChecked():
                 cmd.append("-o")
@@ -693,7 +760,10 @@ class OgrImportDialog(ImportDialog):
             self._addToCommandQueue()
             # run in Layer Manager
             self._giface.RunCmd(
-                cmd, onDone=self.OnCmdDone, userData=userData, addLayer=False
+                cmd,
+                onDone=self.OnCmdDone,
+                userData={"outputs": cmd_outputs},
+                addLayer=False,
             )
 
     def OnCmdDone(self, event):
@@ -929,17 +999,21 @@ class DxfImportDialog(ImportDialog):
 
         data = []
         ret = RunCommand(
-            "v.in.dxf", quiet=True, parent=self, read=True, flags="l", input=path
+            "v.in.dxf",
+            quiet=True,
+            parent=self,
+            read=True,
+            flags="l",
+            input=path,
+            format="json",
         )
         if not ret:
             self.list.LoadData()
             return
 
-        for line in ret.splitlines():
-            layerId = line.split(":")[0].split(" ")[1]
-            layerName = line.split(":")[1].strip()
-            grassName = GetValidLayerName(layerName)
-            data.append((layerId, layerName.strip(), grassName.strip()))
+        for layer in json.loads(ret):
+            grassName = GetValidLayerName(layer["name"])
+            data.append((str(layer["index"]), layer["name"], grassName))
 
         self.list.LoadData(data)
 
