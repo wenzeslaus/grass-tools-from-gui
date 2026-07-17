@@ -32,38 +32,22 @@ from ctypes import byref, c_double, c_int, create_string_buffer, pointer
 
 import grass.script.core as grass
 from core.debug import Debug
-from core.gcmd import GError
+from core.gcmd import GError, RunCommand
 from core.settings import UserSettings
 
 try:
     from grass.lib.dbmi import (
-        DB_C_TYPE_STRING,
-        DB_NEXT,
         DB_OK,
-        DB_SEQUENTIAL,
         db_append_string,
         db_close_database_shutdown_driver,
-        db_convert_column_value_to_string,
         db_execute_immediate,
-        db_fetch,
-        db_get_column_name,
-        db_get_column_sqltype,
-        db_get_column_value,
-        db_get_cursor_table,
         db_get_string,
-        db_get_table_column,
-        db_get_table_number_of_columns,
         db_init_handle,
         db_init_string,
         db_open_database,
-        db_open_select_cursor,
         db_set_handle,
         db_set_string,
-        db_shutdown_driver,
-        db_sqltype_to_Ctype,
         db_start_driver,
-        db_test_value_isnull,
-        dbCursor,
         dbHandle,
         dbString,
     )
@@ -71,7 +55,6 @@ try:
         GMAPSET_MAX,
         GNAME_MAX,
         G_find_vector2,
-        G_free,
         G_name_is_fully_qualified,
     )
     from grass.lib.vector import (
@@ -107,7 +90,6 @@ try:
         Vect_get_area_points,
         Vect_get_centroid_area,
         Vect_get_dblink,
-        Vect_get_field,
         Vect_get_finfo_geometry_type,
         Vect_get_finfo_topology_info,
         Vect_get_line_areas,
@@ -245,6 +227,15 @@ class VDigitError:
         """Sql query failed"""
         GError(
             message=_("Unable to execute SQL query '%s'. Operation canceled.") % sql,
+            parent=self.parent,
+            caption=self.caption,
+        )
+
+    def DbCopy(self, message):
+        """Copying attributes failed"""
+        GError(
+            message=_("Copying attributes failed. Operation canceled.\n\nReason: %s")
+            % message,
             parent=self.parent,
             caption=self.caption,
         )
@@ -1405,89 +1396,20 @@ class IVDigit:
                     # duplicate attributes
                     cat = self.cats[catsFrom.field[i]] + 1
                     self.cats[catsFrom.field[i]] = cat
-                    poFi = Vect_get_field(self.poMapInfo, catsFrom.field[i])
-                    if not poFi:
-                        self._error.DbLink(i)
-                        return -1
-
-                    fi = poFi.contents
-                    driver = db_start_driver(fi.driver)
-                    if not driver:
-                        self._error.Driver(fi.driver)
-                        return -1
-
-                    handle = dbHandle()
-                    db_init_handle(byref(handle))
-                    db_set_handle(byref(handle), fi.database, None)
-                    if db_open_database(driver, byref(handle)) != DB_OK:
-                        db_shutdown_driver(driver)
-                        self._error.Database(fi.driver, fi.database)
-                        return -1
-
-                    stmt = dbString()
-                    db_init_string(byref(stmt))
-                    db_set_string(
-                        byref(stmt),
-                        "SELECT * FROM %s WHERE %s=%d"
-                        % (fi.table, fi.key, catsFrom.cat[i]),
+                    ret, msg = RunCommand(
+                        "v.db.copyatts",
+                        getErrorMsg=True,
+                        map="{}@{}".format(
+                            grass.decode(Vect_get_name(self.poMapInfo)),
+                            grass.decode(Vect_get_mapset(self.poMapInfo)),
+                        ),
+                        layer=catsFrom.field[i],
+                        from_category=catsFrom.cat[i],
+                        to_category=cat,
                     )
-
-                    cursor = dbCursor()
-                    if (
-                        db_open_select_cursor(
-                            driver, byref(stmt), byref(cursor), DB_SEQUENTIAL
-                        )
-                        != DB_OK
-                    ):
-                        db_close_database_shutdown_driver(driver)
+                    if ret != 0:
+                        self._error.DbCopy(msg)
                         return -1
-
-                    table = db_get_cursor_table(byref(cursor))
-                    ncols = db_get_table_number_of_columns(table)
-
-                    sql = "INSERT INTO %s VALUES (" % fi.table
-                    # fetch the data
-                    more = c_int()
-                    while True:
-                        if db_fetch(byref(cursor), DB_NEXT, byref(more)) != DB_OK:
-                            db_close_database_shutdown_driver(driver)
-                            return -1
-                        if not more.value:
-                            break
-
-                        value_string = dbString()
-                        for col in range(ncols):
-                            if col > 0:
-                                sql += ","
-
-                            column = db_get_table_column(table, col)
-                            if db_get_column_name(column) == fi.key:
-                                sql += "%d" % cat
-                                continue
-
-                            value = db_get_column_value(column)
-                            db_convert_column_value_to_string(
-                                column, byref(value_string)
-                            )
-                            if db_test_value_isnull(value):
-                                sql += "NULL"
-                            else:
-                                ctype = db_sqltype_to_Ctype(
-                                    db_get_column_sqltype(column)
-                                )
-                                if ctype != DB_C_TYPE_STRING:
-                                    sql += db_get_string(byref(value_string))
-                                else:
-                                    sql += "'%s'" % db_get_string(byref(value_string))
-
-                    sql += ")"
-                    db_set_string(byref(stmt), sql)
-                    if db_execute_immediate(driver, byref(stmt)) != DB_OK:
-                        db_close_database_shutdown_driver(driver)
-                        return -1
-
-                    db_close_database_shutdown_driver(driver)
-                    G_free(poFi)
 
                 if Vect_cat_set(poCatsTo, catsFrom.field[i], cat) < 1:
                     continue
