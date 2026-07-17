@@ -221,7 +221,7 @@ char *mask_preprocessing(char *mask, char *raster, struct area_entry *ad)
             raster, mask, ad->rl, ad->cl);
 
     tmp_file = G_tempfile();
-    if ((mask_fd = open(tmp_file, O_RDWR | O_CREAT, 0755) < 0)) {
+    if ((mask_fd = open(tmp_file, O_RDWR | O_CREAT, 0755)) < 0) {
         G_free(tmp_file);
         return NULL;
     }

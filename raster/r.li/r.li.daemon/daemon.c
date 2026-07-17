@@ -381,8 +381,16 @@ int parseSetup(char *path, struct list *l, struct g_area *g, char *raster)
                 /* current sample area (subset of total sample area) */
                 g->rl = sa_rl;
                 g->cl = sa_cl;
+                /* next() in list.c generates areas starting from sf_x and
+                 * sf_y, like in the SAMPLEAREA runtime disposition above;
+                 * without them it reads uninitialized memory */
+                g->sf_x = sf_x;
+                g->sf_y = sf_y;
+
                 g->count = 1;
-                g->maskname = maskname;
+                /* next() in list.c reads the mask name after this function
+                 * returns, so it must not point to this stack buffer */
+                g->maskname = G_store(maskname);
 
                 int res = disposeAreas(l, g, strtok(NULL, "\n"));
                 close(setup);
