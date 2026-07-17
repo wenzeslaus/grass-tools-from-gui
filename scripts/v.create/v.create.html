@@ -1,0 +1,69 @@
+<h2>DESCRIPTION</h2>
+
+<em>v.create</em> creates a new empty vector map in the current mapset.
+Optionally, it also creates a new attribute table and connects it to
+the new map in a single call.
+
+<p>
+An attribute table is created when column definitions are given with
+the <b>columns</b> option or when the <b>-t</b> flag is set. The table
+always contains the key column (<b>key</b> option, <code>cat</code> by
+default) of type integer; with <b>columns</b>, the user-defined columns
+are added. Without <b>columns</b> and without <b>-t</b>, only the
+vector map is created and no table is connected to it.
+
+<p>
+The whole operation behaves atomically: if creating or connecting the
+attribute table fails, the new vector map is removed again, so a
+failed call does not leave a map without the requested table behind.
+
+<h2>NOTES</h2>
+
+The new map is created by <em>v.edit</em> with <code>tool=create</code>
+and the table is created and connected by <em>v.db.addtable</em>, so
+the <b>columns</b>, <b>key</b>, and <b>layer</b> options have the same
+semantics as in <em>v.db.addtable</em>. The table is named after the
+vector map (for <b>layer</b> higher than 1, the layer number is
+appended to the table name).
+
+<p>
+An existing map of the same name is overwritten only when the
+<code>--overwrite</code> flag is used.
+
+<h2>EXAMPLES</h2>
+
+Create a new empty vector map without an attribute table:
+
+<div class="code"><pre>
+v.create output=new_points
+</pre></div>
+
+Create a new empty vector map with an attribute table with only the
+default key column (<code>cat</code>):
+
+<div class="code"><pre>
+v.create -t output=new_points
+</pre></div>
+
+Create a new empty vector map with an attribute table with two
+user-defined columns:
+
+<div class="code"><pre>
+v.create output=new_points columns="name varchar(20),value double precision"
+</pre></div>
+
+The new map can then be edited interactively, e.g., in the GUI
+digitizer, or programmatically with <em>v.edit</em>.
+
+<h2>SEE ALSO</h2>
+
+<em>
+<a href="v.db.addtable.html">v.db.addtable</a>,
+<a href="v.db.connect.html">v.db.connect</a>,
+<a href="v.edit.html">v.edit</a>,
+<a href="v.in.ascii.html">v.in.ascii</a>
+</em>
+
+<h2>AUTHORS</h2>
+
+Vaclav Petras, NC State University, Center for Geospatial Analytics

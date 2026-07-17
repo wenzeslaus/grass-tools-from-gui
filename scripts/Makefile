@@ -58,6 +58,7 @@ SUBDIRS = \
 	v.build.all \
 	v.centroids \
 	v.clip \
+	v.create \
 	v.db.addcolumn \
 	v.db.addtable \
 	v.db.join \
