@@ -1,0 +1,79 @@
+<h2>DESCRIPTION</h2>
+
+<em>v.db.copyatts</em> copies the attribute row of one feature,
+identified by its category in a given layer, to one or more target
+categories in the same vector map. All columns except the key column
+are copied; the key column of each new row is set to the target
+category.
+
+<p>
+The typical use is duplicating a feature: after the geometry is copied
+and a new category assigned (e.g., with <em>v.edit</em> or
+<em>v.category</em>), this tool copies the attributes of the original
+feature to the new category.
+
+<h2>NOTES</h2>
+
+The key column (by default <code>cat</code>) is taken from the database
+connection of the given layer as reported by
+<code>v.db.connect -g</code>.
+
+<p>
+By default, the tool ends with an error when an attribute row for any
+of the target categories already exists, and no rows are changed. With
+the <b>-f</b> flag, existing rows of target categories are replaced by
+a copy of the source row.
+
+<p>
+The row is copied inside the database with a single
+<code>INSERT ... SELECT</code> statement per target category, so the
+values never pass through a textual representation: NULL values, quotes
+in text values, and the precision of floating-point numbers are all
+preserved exactly.
+
+<p>
+The source category must have exactly one attribute row; the tool ends
+with an error when the row is missing or when the table contains
+multiple rows with that category. The source category cannot be one of
+the target categories. Duplicate target categories are copied only
+once.
+
+<p>
+The tool changes only the attribute table. It does not check that
+features with the target categories exist and it does not assign
+categories to features; use <em>v.category</em> or <em>v.edit</em> for
+that.
+
+<h2>EXAMPLES</h2>
+
+Copy the attributes of the feature with category 5 to category 21:
+
+<div class="code"><pre>
+v.db.copyatts map=mypoints from_category=5 to_category=21
+</pre></div>
+
+Copy the attributes of category 5 in layer 2 to several new categories:
+
+<div class="code"><pre>
+v.db.copyatts map=mypoints layer=2 from_category=5 to_category=21,22,23
+</pre></div>
+
+Replace the existing attributes of category 3 with those of category 5:
+
+<div class="code"><pre>
+v.db.copyatts -f map=mypoints from_category=5 to_category=3
+</pre></div>
+
+<h2>SEE ALSO</h2>
+
+<em>
+<a href="db.execute.html">db.execute</a>,
+<a href="v.category.html">v.category</a>,
+<a href="v.db.connect.html">v.db.connect</a>,
+<a href="v.db.select.html">v.db.select</a>,
+<a href="v.db.update.html">v.db.update</a>
+</em>
+
+<h2>AUTHORS</h2>
+
+Vaclav Petras, NC State University, Center for Geospatial Analytics
