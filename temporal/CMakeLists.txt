@@ -19,6 +19,7 @@ set(temporal_script_modules_list
     t.rast.mapcalc
     t.rast.neighbors
     t.rast.out.vtk
+    t.rast.render
     t.rast.series
     t.rast.to.rast3
     t.rast.to.vect
