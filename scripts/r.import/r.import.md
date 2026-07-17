@@ -1,11 +1,19 @@
 ## DESCRIPTION
 
-*r.import* imports a map or selected bands from a GDAL raster datasource
-into the current project (previously called location) and mapset. If the
-coordinate reference system (CRS) of the input does not match the CRS of
-the project, the input is reprojected into the current project. If the
-CRS of the input does match the CRS of the project, the input is
-imported directly with [r.in.gdal](r.in.gdal.md).
+*r.import* imports a map or selected bands from one or more GDAL raster
+datasources into the current project (previously called location) and
+mapset. If the coordinate reference system (CRS) of the input does not
+match the CRS of the project, the input is reprojected into the current
+project. If the CRS of the input does match the CRS of the project, the
+input is imported directly with [r.in.gdal](r.in.gdal.md).
+
+Multiple datasources can be given as a comma-separated list in the
+**input** option and they are imported one by one. The **output** option
+is optional: when omitted, the name of each output raster map is derived
+from the corresponding input file name (the directory part and the file
+extension are removed and remaining illegal characters are replaced by
+underscores). When **output** is given, the number of names must match
+the number of inputs.
 
 ## NOTES
 
@@ -75,6 +83,14 @@ with the **-n** flag. For further explanations of **-n** flag, please
 refer the to [r.proj](r.proj.md) manual.
 
 ## EXAMPLES
+
+### Bulk import of multiple files
+
+```sh
+# import two GeoTIFF files at once; output names are derived from the
+# file names, creating raster maps "elevation_a" and "elevation_b"
+r.import input=elevation_a.tif,elevation_b.tif
+```
 
 ### Import of SRTM V3 global data at 1 arc-seconds resolution
 
