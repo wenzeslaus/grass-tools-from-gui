@@ -18,6 +18,7 @@ This program is free software under the GNU General Public License
 @author Stepan Turek <stepan.turek seznam.cz> (mentor: Martin Landa)
 """
 
+import json
 import os
 
 import numpy as np
@@ -113,6 +114,10 @@ class Core:
         return cat_id
 
     def ComputeCatsScatts(self, cats_ids):
+        cats_ids = [c for c in cats_ids if not self._computeUnconditionedScatts(c)]
+        if not cats_ids:
+            return
+
         requested_dt = {}
         requested_dt_conds = {}
 
@@ -140,6 +145,75 @@ class Core:
 
         if returncode < 0:
             raise GException(_("Computing of scatter plots failed."))
+
+    def _computeUnconditionedScatts(self, cat_id):
+        """Compute scatter plots of a category without conditions by i.scatter.
+
+        Only a category with no selections is the plain 2D histogram that
+        i.scatter computes: no areas selected in the scatter plots, no
+        condition raster with pixels selected in the map window, and no
+        category raster to write back, which holds exactly for the default
+        category 0. Conditioned categories fuse pixel classification with
+        the histogram computation and stay with I_compute_scatts (see
+        ComputeCatsScatts).
+
+        :return: True if all scatter plots of the category were computed
+        """
+        if self.scatt_conds_dt.GetCatScatts(cat_id):
+            return False
+        if self.scatts_dt.GetCatRastCond(cat_id) or self.scatts_dt.GetCatRast(cat_id):
+            return False
+
+        bands = self.an_data.GetBands()
+        region = self.an_data.GetRegion()
+        environs = os.environ.copy()
+        # I_compute_scatts uses the region stored when the data were set,
+        # not the current region (it calls Rast_set_window for it).
+        environs["GRASS_REGION"] = gs.region_env(
+            n=region["n"],
+            s=region["s"],
+            e=region["e"],
+            w=region["w"],
+            nsres=region["nsres"],
+            ewres=region["ewres"],
+        )
+
+        for scatt_id in self.scatts_dt.GetCatScatts(cat_id):
+            b_1, b_2 = idScattToidBands(scatt_id, len(bands))
+            b = self.scatts_dt.GetBandsInfo(scatt_id)
+
+            returncode, data, messages = RunCommand(
+                "i.scatter",
+                input="%s,%s" % (bands[b_1], bands[b_2]),
+                # One bin per integer value over the whole-map ranges gives
+                # the same binning as I_compute_scatts (see GetRasterInfo).
+                bins="%d,%d" % (b["b1"]["range"], b["b2"]["range"]),
+                range="%.1f,%.1f,%.1f,%.1f"
+                % (
+                    b["b1"]["min"] - 0.5,
+                    b["b1"]["max"] + 0.5,
+                    b["b2"]["min"] - 0.5,
+                    b["b2"]["max"] + 0.5,
+                ),
+                format="json",
+                read=True,
+                getErrorMsg=True,
+                env=environs,
+            )
+            if returncode != 0:
+                gs.debug(
+                    "i.scatter failed, falling back to I_compute_scatts:\n%s" % messages
+                )
+                return False
+
+            counts = json.loads(data)["categories"][0]["counts"]
+            arr = self.scatts_dt.GetValuesArr(cat_id, scatt_id)
+            # The counts are indexed [x bin][y bin] while the scatter plot
+            # array is indexed [row (y)][column (x)]
+            # (see ScattPlotsCondsData.AddScattPlot).
+            arr[:] = np.asarray(counts, dtype=arr.dtype).T
+
+        return True
 
     def CatRastUpdater(self):
         return self.cat_rast_updater
