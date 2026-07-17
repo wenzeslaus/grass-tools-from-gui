@@ -21,6 +21,7 @@ This program is free software under the GNU General Public License
 @author William Welch <ww.dev icloud.com> (commands running queue)
 """
 
+import json
 import os
 from collections import deque
 
@@ -998,17 +999,21 @@ class DxfImportDialog(ImportDialog):
 
         data = []
         ret = RunCommand(
-            "v.in.dxf", quiet=True, parent=self, read=True, flags="l", input=path
+            "v.in.dxf",
+            quiet=True,
+            parent=self,
+            read=True,
+            flags="l",
+            input=path,
+            format="json",
         )
         if not ret:
             self.list.LoadData()
             return
 
-        for line in ret.splitlines():
-            layerId = line.split(":")[0].split(" ")[1]
-            layerName = line.split(":")[1].strip()
-            grassName = GetValidLayerName(layerName)
-            data.append((layerId, layerName.strip(), grassName.strip()))
+        for layer in json.loads(ret):
+            grassName = GetValidLayerName(layer["name"])
+            data.append((str(layer["index"]), layer["name"], grassName))
 
         self.list.LoadData(data)
 
