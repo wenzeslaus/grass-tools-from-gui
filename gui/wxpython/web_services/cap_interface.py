@@ -22,18 +22,10 @@ This program is free software under the GNU General Public License
 @author Stepan Turek <stepan.turek seznam.cz> (Mentor: Martin Landa)
 """
 
-import os
-import sys
-
-WMSLibPath = os.path.join(os.getenv("GISBASE"), "etc", "r.in.wms")
-if WMSLibPath not in sys.path:
-    sys.path.append(WMSLibPath)
-
-# Import only after the path has been set up.
-from wms_cap_parsers import (  # noqa: E402
+from grass.web_services.wms_cap_parsers import (
+    OnEarthCapabilitiesTree,
     WMSCapabilitiesTree,
     WMTSCapabilitiesTree,
-    OnEarthCapabilitiesTree,
 )
 
 

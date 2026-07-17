@@ -23,7 +23,8 @@ set(PYDIRS
     temporal
     temporal/ply
     tools
-    utils)
+    utils
+    web_services)
 
 set(PYDIR_GRASS ${GRASS_INSTALL_PYDIR}/grass)
 
