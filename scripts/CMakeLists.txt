@@ -145,10 +145,6 @@ add_custom_target(
     ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_SOURCE_DIR}/r.in.wms/wms_base.py
     ${OUTDIR}/${GRASS_INSTALL_ETCBINDIR}/r.in.wms
   COMMAND
-    ${CMAKE_COMMAND} -E copy
-    ${CMAKE_CURRENT_SOURCE_DIR}/r.in.wms/wms_cap_parsers.py
-    ${OUTDIR}/${GRASS_INSTALL_ETCBINDIR}/r.in.wms
-  COMMAND
     ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_SOURCE_DIR}/r.in.wms/wms_drv.py
     ${OUTDIR}/${GRASS_INSTALL_ETCBINDIR}/r.in.wms
   COMMAND

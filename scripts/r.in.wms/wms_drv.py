@@ -40,10 +40,13 @@ from urllib.error import HTTPError
 from xml.etree.ElementTree import ParseError
 
 import numpy as np
-
 from srs import Srs
 from wms_base import GetEpsg, GetSRSParamVal, WMSBase
-from wms_cap_parsers import OnEarthCapabilitiesTree, WMTSCapabilitiesTree
+
+from grass.web_services.wms_cap_parsers import (
+    OnEarthCapabilitiesTree,
+    WMTSCapabilitiesTree,
+)
 
 
 class WMSDrv(WMSBase):
