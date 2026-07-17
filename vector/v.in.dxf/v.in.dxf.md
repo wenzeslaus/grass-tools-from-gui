@@ -32,6 +32,52 @@ supported by GRASS database drivers). For text type entities, the text
 value will be stored in the "label" column of the GRASS vector output
 map. Neither the "handle" nor "label" column is mandatory.
 
+With the **-l** flag, *v.in.dxf* lists the layers found in the DXF file
+and exits without importing anything. The **format** option selects the
+format of this listing: `plain` (default) prints one human-oriented text
+line per layer, while `json` prints a JSON array of layer objects for
+use in scripts. The **format** option applies only to the layer listing;
+using `format=json` without **-l** raises an error because the import
+mode produces no listing output.
+
+## EXAMPLES
+
+List the layers of a DXF file as plain text:
+
+```sh
+v.in.dxf -l input=map.dxf
+```
+
+```text
+Layer 1: point
+Layer 2: point_label
+```
+
+List the layers of a DXF file in JSON format:
+
+```sh
+v.in.dxf -l input=map.dxf format=json
+```
+
+```json
+[
+    {
+        "index": 1,
+        "name": "point"
+    },
+    {
+        "index": 2,
+        "name": "point_label"
+    }
+]
+```
+
+Import only the layer named `point`:
+
+```sh
+v.in.dxf input=map.dxf layers=point output=imported
+```
+
 ## REFERENCES
 
 [AutoCad DXF](https://en.wikipedia.org/wiki/AutoCAD_DXF) (from

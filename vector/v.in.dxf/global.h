@@ -28,6 +28,7 @@ struct dxf_file {
 
 GLOBAL int flag_list, flag_extent, flag_table, flag_topo, flag_invert,
     flag_one_layer, flag_frame;
+GLOBAL int format_json;
 GLOBAL char **opt_layers;
 GLOBAL char dxf_buf[DXF_BUF_SIZE];
 GLOBAL int arr_max;
@@ -41,6 +42,7 @@ int check_ext(double, double, double);
 /* layer_list.c */
 void add_layer_to_list(const char *, int);
 int is_layer_in_list(const char *);
+void print_layer_list_json(void);
 void init_list(void);
 
 /* read_dxf.c */

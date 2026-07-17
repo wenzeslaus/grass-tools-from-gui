@@ -29,8 +29,11 @@
 
 #define _MAIN_C_
 #include <stdlib.h>
+#include <string.h>
+
 #include <grass/gis.h>
 #include <grass/glocale.h>
+
 #include "global.h"
 
 int main(int argc, char *argv[])
@@ -54,6 +57,7 @@ int main(int argc, char *argv[])
         struct Option *input;
         struct Option *output;
         struct Option *layers;
+        struct Option *format;
     } opt;
 
     G_gisinit(argv[0]);
@@ -108,6 +112,10 @@ int main(int argc, char *argv[])
     opt.layers->description = _("List of DXF layers to import (default: all)");
     opt.layers->guisection = _("DXF layers");
 
+    opt.format = G_define_standard_option(G_OPT_F_FORMAT);
+    opt.format->description = _("Applies only to the layer listing (-l flag)");
+    opt.format->guisection = _("DXF layers");
+
     if (G_parser(argc, argv))
         exit(EXIT_FAILURE);
 
@@ -118,9 +126,15 @@ int main(int argc, char *argv[])
     flag_one_layer = flag.one_layer->answer;
     flag_frame = flag.frame->answer;
     opt_layers = opt.layers->answers;
+    format_json = strcmp(opt.format->answer, "json") == 0;
 
     if (flag_invert && !opt_layers)
         G_fatal_error(_("Please specify list of DXF layers to exclude"));
+
+    /* import mode produces no listing output that could be formatted */
+    if (format_json && !flag_list)
+        G_fatal_error(_("The format option can only be used with -%c flag"),
+                      flag.list->key);
 
     /* open DXF file */
     if (!(dxf = dxf_open(opt.input->answer)))
@@ -152,8 +166,11 @@ int main(int argc, char *argv[])
 
     dxf_close(dxf);
 
-    if (flag_list)
+    if (flag_list) {
+        if (format_json)
+            print_layer_list_json();
         init_list();
+    }
     else {
         Vect_close(&Map);
 
