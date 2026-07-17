@@ -1,0 +1,187 @@
+<h2>DESCRIPTION</h2>
+
+<em>r.li.config</em> creates configuration files for the <em>r.li</em>
+landscape structure analysis tools without the interactive
+<em>g.gui.rlisetup</em> wizard. The configuration file describes the
+sampling frame (the part of the raster map to analyze) and the sample
+areas within it.
+
+<p>
+The sampling frame is either the whole map (<b>frame=whole</b>, the
+default) or a rectangular sub-region given by its edge coordinates in
+map units (<b>frame=region</b> with <b>north</b>, <b>south</b>,
+<b>east</b>, and <b>west</b>).
+
+<p>
+The sample areas are selected with the <b>method</b> option:
+
+<ul>
+<li><b>whole</b>: one sample area covering the whole sampling frame;
+the <em>r.li</em> tools write one result value to a text file.</li>
+<li><b>moving_window</b>: a moving window; the <em>r.li</em> tools
+write an output raster map where each cell holds the index computed
+from the window centered on it.</li>
+<li><b>units</b>: sample units placed in the sampling frame; the
+<em>r.li</em> tools write one result value per unit to a text file.
+The placement is controlled by <b>distribution</b>: <b>random</b>
+places <b>count</b> non-overlapping units at random (with a fixed
+seed, so the placement is reproducible),
+<b>systematic_contiguous</b> fills the frame with a contiguous grid of
+units.</li>
+<li><b>vector</b>: one masked sample area per area of the vector map
+given by the <b>vector</b> option; the <em>r.li</em> tools write one
+result value per area to a text file (see the NOTES section).</li>
+</ul>
+
+With <b>method=moving_window</b> and <b>method=units</b>, the sample
+area is either a rectangle of <b>width</b> x <b>height</b> cells
+(<b>shape=rectangle</b>, the default) or a circle with the given
+<b>radius</b> in map units (<b>shape=circle</b>). For a circle,
+<em>r.li.config</em> creates a binary circular mask raster map named
+by the <b>mask</b> option with <em>r.circle</em> (see the NOTES
+section).
+
+<p>
+The generated file uses the same format as <em>g.gui.rlisetup</em>: a
+<code>SAMPLINGFRAME</code> line followed by the sample area lines
+(<code>SAMPLEAREA</code>, <code>MASKEDSAMPLEAREA</code> for circles, or
+<code>MASKEDOVERLAYAREA</code> with <code>RASTERMAP</code> and
+<code>VECTORMAP</code> for vector sampling) and, for sample units and
+moving window, a line with the placement (<code>MOVINGWINDOW</code>,
+<code>RANDOMNONOVERLAPPING n</code>, or
+<code>SYSTEMATICCONTIGUOUS</code>). All positions and sizes are stored
+relative to the reference raster map given by the <b>raster</b> option
+(see the NOTES section).
+
+<h2>NOTES</h2>
+
+The configuration file is created in the <code>r.li</code> subdirectory
+of the GRASS configuration directory (<code>~/.grass8/r.li/</code> on
+Linux, <code>%APPDATA%\GRASS8\r.li\</code> on Windows), because that is
+the only place where the <em>r.li</em> tools look for it. The
+<b>output</b> option is therefore a file name, not a path. The
+<em>r.li</em> tools also accept the full path of a file in this
+directory, but not paths outside of it. The directory honors the
+<code>GRASS_CONFIG_DIR</code> environment variable when set.
+
+<p>
+The file does not store map coordinates: positions and sizes are stored
+as fractions of the rows and columns of the reference raster map
+(<b>raster</b>), and edge coordinates given with <b>frame=region</b>
+are first aligned to the cells of that raster. This makes the file
+independent of a specific raster map, and the <em>r.li</em> tools
+resolve the fractions against the current computation region at
+analysis time. For meaningful results, run the <em>r.li</em> tools with
+the computation region set to match the reference raster map
+(<code>g.region raster=...</code>).
+
+<p>
+With <b>shape=circle</b>, the circle mask raster map is created in the
+box of the rounded circle diameter (in cells, increased to the next
+odd number) at the north-west corner of the sampling frame, the same
+way <em>g.gui.rlisetup</em> creates it. <em>r.li.daemon</em> reads
+sample area masks at the absolute position of each sample area, so
+only moving window positions or sample units overlapping this box
+produce values; all other sample areas give NULL results. Unlike
+<em>g.gui.rlisetup</em>, which creates the circle mask for
+keyboard-defined sample units but omits it from the configuration file
+(so the circle has no effect there), <em>r.li.config</em> always
+writes the mask into a <code>MASKEDSAMPLEAREA</code> line.
+
+<p>
+With <b>method=vector</b>, every area category of <b>vector</b> (in
+<b>layer</b>) becomes one sample area: the area is converted to a
+raster mask named
+<code>&lt;raster&gt;_&lt;vector&gt;_&lt;category&gt;</code> covering
+the bounding box of the area aligned to the reference raster, like
+<em>g.gui.rlisetup</em> does with all areas of a vector map. Cells of
+the bounding box outside the area are masked out in the analysis. The
+configuration file records the reference raster name, and the
+<em>r.li</em> tools accept only that exact name as their input map.
+Sampling based on interactively drawn regions is not covered; use
+<em>g.gui.rlisetup</em> for that.
+
+<h2>EXAMPLES</h2>
+
+The examples use the <code>landclass96</code> map of the North Carolina
+sample dataset:
+
+<div class="code"><pre>
+g.region raster=landclass96
+</pre></div>
+
+One sample area covering the whole map, result in a text file:
+
+<div class="code"><pre>
+r.li.config raster=landclass96 output=whole_map
+r.li.patchdensity input=landclass96 config=whole_map output=patchdensity_whole
+</pre></div>
+
+Analysis limited to a rectangular sub-region:
+
+<div class="code"><pre>
+r.li.config raster=landclass96 output=sub_region \
+    frame=region north=228500 south=215000 east=644000 west=630000
+r.li.patchdensity input=landclass96 config=sub_region output=patchdensity_sub
+</pre></div>
+
+A 7x7 cell moving window producing a raster map of patch densities:
+
+<div class="code"><pre>
+r.li.config raster=landclass96 output=window7 \
+    method=moving_window width=7 height=7
+r.li.patchdensity input=landclass96 config=window7 output=patchdensity_window7
+</pre></div>
+
+Ten randomly placed sample units of 10x10 cells, one result per unit:
+
+<div class="code"><pre>
+r.li.config raster=landclass96 output=random10 \
+    method=units width=10 height=10 distribution=random count=10
+r.li.patchdensity input=landclass96 config=random10 output=patchdensity_random
+</pre></div>
+
+A systematic contiguous grid of 20x20 cell sample units:
+
+<div class="code"><pre>
+r.li.config raster=landclass96 output=grid20 \
+    method=units width=20 height=20 distribution=systematic_contiguous
+r.li.patchdensity input=landclass96 config=grid20 output=patchdensity_grid
+</pre></div>
+
+A circular moving window with a radius of 100 meters; the circle mask
+raster map <code>circle100</code> is created by <em>r.li.config</em>:
+
+<div class="code"><pre>
+r.li.config raster=landclass96 output=circle100_window \
+    method=moving_window shape=circle radius=100 mask=circle100
+r.li.patchdensity input=landclass96 config=circle100_window \
+    output=patchdensity_circle
+</pre></div>
+
+One masked sample area per area of a vector map, one result per area:
+
+<div class="code"><pre>
+r.li.config raster=landclass96 output=zones \
+    method=vector vector=urbanarea
+r.li.patchdensity input=landclass96 config=zones output=patchdensity_zones
+</pre></div>
+
+<h2>SEE ALSO</h2>
+
+<em>
+<a href="g.gui.rlisetup.html">g.gui.rlisetup</a>,
+<a href="r.circle.html">r.circle</a>,
+<a href="r.li.html">r.li</a>,
+<a href="r.li.daemon.html">r.li.daemon</a>,
+<a href="r.li.patchdensity.html">r.li.patchdensity</a>,
+<a href="v.to.rast.html">v.to.rast</a>
+</em>
+
+<h2>AUTHORS</h2>
+
+Vaclav Petras, NC State University, Center for Geospatial Analytics
+
+<p>
+Based on the configuration file writing code of <em>g.gui.rlisetup</em>
+by Luca Delucchi.
