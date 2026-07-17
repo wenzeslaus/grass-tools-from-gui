@@ -1,0 +1,180 @@
+<h2>DESCRIPTION</h2>
+
+<em>i.scatter</em> computes scatter plot data for a pair of raster
+maps, typically two bands of an imagery group. The result is a 2D
+histogram: the value range of each raster is divided into a number of
+bins (<b>bins</b>) and the tool counts the cells falling into each pair
+of bins. The first raster in <b>input</b> is the x axis, the second one
+is the y axis.
+
+<p>
+Only cells which are non-null in both input rasters are counted. With
+<b>training</b>, an integer (CELL) raster with category values, e.g.,
+rasterized training areas from supervised classification, counts are
+reported separately for each category present in the training raster;
+cells where the training raster is null are not counted. All categories
+are binned with the same bin edges, so the per-category histograms are
+directly comparable.
+
+<p>
+By default, the value range used for binning is the actual range of
+values in the current computational region, computed from the cells
+where both inputs are non-null (regardless of the training raster).
+A fixed range can be set with <b>range</b> to make outputs comparable
+across regions, training rasters, or points in time. Cells with values
+outside the range are not counted.
+
+<p>
+When <b>bins</b> is not set and both inputs are integer (CELL) rasters
+and <b>range</b> is not set either, each integer value gets its own
+bin: for an axis with values from <em>min</em> to <em>max</em>, there
+are <em>max - min + 1</em> bins with edges at <em>min - 0.5</em>,
+<em>min + 0.5</em>, ..., <em>max + 0.5</em>, so each bin is centered on
+an integer value. Otherwise, the default is 255 bins per axis, evenly
+dividing the range.
+
+<p>
+The computational region determines which cells are read and counted
+(use <em>g.region</em> to set it; an active raster mask is respected).
+
+<h3>Output formats</h3>
+
+With <b>format=json</b> (the default), the output is a single JSON
+object:
+
+<div class="code"><pre>
+{
+  "input": ["band1", "band2"],
+  "training": null,
+  "bins": [4, 3],
+  "x_edges": [0.5, 1.5, 2.5, 3.5, 4.5],
+  "y_edges": [0.5, 1.5, 2.5, 3.5],
+  "categories": [
+    {"category": null, "cells": 12, "counts": [[1, 1, 1], "..."]}
+  ]
+}
+</pre></div>
+
+The <em>counts</em> item of each category is a 2D array with one row
+per x bin and one column per y bin. <code>counts[i][j]</code> is the
+number of counted cells whose first-raster value falls into x bin
+<code>i</code> and whose second-raster value falls into y bin
+<code>j</code>. Bin <code>i</code> spans
+<code>[x_edges[i], x_edges[i+1])</code>; the last bin of each axis also
+includes its upper edge. <em>cells</em> is the sum of <em>counts</em>,
+i.e., the number of cells counted for the category. Without
+<b>training</b>, there is exactly one entry in <em>categories</em> and
+its <em>category</em> is <code>null</code>; with <b>training</b>,
+<em>category</em> is the integer category value and the entries are
+sorted by category.
+
+<p>
+With <b>format=csv</b>, only nonzero bins are written, one per line, as
+zero-based bin indices and the count. The header line is
+<code>x_bin,y_bin,count</code>, or
+<code>category,x_bin,y_bin,count</code> when <b>training</b> is given.
+Lines are ordered by category, then x bin, then y bin.
+
+<p>
+By default the output goes to standard output; use <b>output</b> to
+write to a file instead.
+
+<h2>NOTES</h2>
+
+With the default one bin per integer value, bin index plus the axis
+minimum gives the cell value, and the counts match
+<code>r.stats -c</code> for the same raster pair. To get the same
+one-value-one-bin behavior with an explicit range, align the bins with
+the integer values manually, e.g., for values from 1 to 4 use
+<code>bins=4</code> and range limits <code>0.5,4.5</code>.
+
+<p>
+When the number of bins is determined automatically, <em>i.scatter</em>
+refuses to create more than 4100 x 4100 bins (integer rasters with a
+very wide value range); set <b>bins</b>, and optionally <b>range</b>,
+for such data. If the range of an axis derived from the data is empty
+(a constant raster), it is padded by 0.5 in both directions.
+
+<p>
+<em>i.scatter</em> is a standalone counterpart of the data computation
+done by the interactive scatter plot of <em>g.gui.iclass</em> and the
+map display (implemented in C as <code>I_compute_scatts</code>). Both
+count integer data with one bin per integer value, but the interactive
+tool works on CELL rasters only and derives the bins from the whole
+map's stored range, while <em>i.scatter</em> also accepts
+floating-point rasters, bins them over a value range, and by default
+derives the range from the current computational region. The
+interactive tool additionally conditions counts on areas selected in
+the plots themselves, which has no equivalent here.
+
+<p>
+For integer rasters, <em>r.stats</em> already covers unconditioned
+counting: <code>r.stats -c input=band1,band2</code> reports the count
+of every occurring value pair, and adding a category raster as a third
+input conditions the counts on its categories. <em>r.stats</em> with
+<b>nsteps</b> (default 255, same as here) can also bin floating-point
+values, but each raster is binned by its own map-wide stored range and
+the bins are reported as text labels. The value of <em>i.scatter</em>
+is uniform binning across both axes with explicit numeric bin edges, a
+fixed user-defined range independent of the data, and machine-readable
+JSON output, in particular for floating-point data and per-category
+(training area) counts.
+
+<p>
+Each input raster is read for the whole computational region as a
+disk-backed NumPy array (via <em>r.out.bin</em>, 8 bytes per cell per
+raster), so available disk space and address space, not RAM, limit the
+region size. The histogram itself needs memory proportional to the
+number of bins (x bins times y bins per category).
+
+<h2>EXAMPLES</h2>
+
+Scatter plot data of two integer bands in JSON, with one bin per
+integer value (North Carolina dataset):
+
+<div class="code"><pre>
+g.region raster=lsat7_2002_10
+i.scatter input=lsat7_2002_10,lsat7_2002_20
+</pre></div>
+
+Counts per training area category, written to a CSV file:
+
+<div class="code"><pre>
+i.scatter input=lsat7_2002_10,lsat7_2002_20 training=landclass96 \
+    format=csv output=scatter.csv
+</pre></div>
+
+Plot the counts with matplotlib:
+
+<div class="code"><pre>
+import json
+import subprocess
+
+import matplotlib.pyplot as plt
+import numpy as np
+
+data = json.loads(
+    subprocess.check_output(
+        ["i.scatter", "input=lsat7_2002_10,lsat7_2002_20"], text=True
+    )
+)
+counts = np.array(data["categories"][0]["counts"])
+plt.pcolormesh(data["x_edges"], data["y_edges"], counts.T)
+plt.show()
+</pre></div>
+
+<h2>SEE ALSO</h2>
+
+<em>
+<a href="g.gui.iclass.html">g.gui.iclass</a>,
+<a href="g.region.html">g.region</a>,
+<a href="r.stats.html">r.stats</a>,
+<a href="r.univar.html">r.univar</a>
+</em>
+
+<h2>AUTHORS</h2>
+
+Vaclav Petras, NC State University, Center for Geospatial Analytics
+<p>
+Based on the behavior of the wxGUI interactive scatter plot by Stepan
+Turek.

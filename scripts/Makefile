@@ -30,6 +30,7 @@ SUBDIRS = \
 	i.in.spotvgt \
 	i.oif \
 	i.pansharpen \
+	i.scatter \
 	i.spectral \
 	i.tasscap \
 	m.proj \
