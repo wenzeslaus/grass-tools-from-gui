@@ -63,6 +63,7 @@ SUBDIRS = \
 	v.clip \
 	v.db.addcolumn \
 	v.db.addtable \
+	v.db.copyatts \
 	v.db.join \
 	v.db.dropcolumn \
 	v.db.droprow \

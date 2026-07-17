@@ -61,6 +61,7 @@ set(script_DIRS
     v.clip
     v.db.addcolumn
     v.db.addtable
+    v.db.copyatts
     v.db.dropcolumn
     v.db.droprow
     v.db.droptable
