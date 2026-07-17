@@ -27,6 +27,7 @@ SUBDIRS = \
 	g.search.modules \
 	i.band.library \
 	i.colors.enhance \
+	i.gcp.manage \
 	i.image.mosaic \
 	i.in.spotvgt \
 	i.oif \
