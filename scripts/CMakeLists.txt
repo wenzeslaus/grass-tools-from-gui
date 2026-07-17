@@ -31,6 +31,7 @@ set(script_DIRS
     i.spectral
     i.tasscap
     m.proj
+    ps.render
     r.blend
     r.buffer.lowmem
     r.colors.stddev
