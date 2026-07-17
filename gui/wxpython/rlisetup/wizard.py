@@ -206,10 +206,12 @@ class RLIWizard:
             self.SF_Y = float(self.keyboardpage.row_up)
             self.SF_RL = float(self.keyboardpage.row_len)
             self.SF_CL = float(self.keyboardpage.col_len)
+            # SF_Y, SF_RL, SF_X, and SF_CL are cell counts; convert them
+            # to map units with the resolution before applying offsets.
             self.SF_N = self.gregion["n"] - (self.SF_NSRES * self.SF_Y)
-            self.SF_S = self.gregion["n"] - (self.SF_NSRES * self.SF_Y + self.SF_RL)
+            self.SF_S = self.gregion["n"] - (self.SF_NSRES * (self.SF_Y + self.SF_RL))
             self.SF_W = self.gregion["w"] + (self.SF_EWRES * self.SF_X)
-            self.SF_E = self.gregion["w"] + (self.SF_EWRES * self.SF_X + self.SF_CL)
+            self.SF_E = self.gregion["w"] + (self.SF_EWRES * (self.SF_X + self.SF_CL))
             self.per_x = float(self.SF_X) / float(self.rasterinfo["cols"])
             self.per_y = float(self.SF_Y) / float(self.rasterinfo["rows"])
             self.per_rl = float(self.SF_RL) / float(self.rasterinfo["rows"])
@@ -372,11 +374,15 @@ class RLIWizard:
                 self._circle(self.units.width, self.units.height)
                 cl = float(self.CIR_CL) / float(self.rasterinfo["cols"])
                 rl = float(self.CIR_RL) / float(self.rasterinfo["rows"])
+                # Write the circle mask into the sample area line;
+                # a plain SAMPLEAREA line would ignore the mask.
+                fil.write(
+                    "MASKEDSAMPLEAREA -1|-1|%r|%r|%s\n" % (rl, cl, self.units.height)
+                )
             else:
                 cl = float(self.units.width) / float(self.rasterinfo["cols"])
                 rl = float(self.units.height) / float(self.rasterinfo["rows"])
-
-            fil.write("SAMPLEAREA -1|-1|%r|%r\n" % (rl, cl))
+                fil.write("SAMPLEAREA -1|-1|%r|%r\n" % (rl, cl))
             if self.units.distrtype == "non_overlapping":
                 fil.write("RANDOMNONOVERLAPPING %s\n" % self.units.distr1)
             elif self.units.distrtype == "systematic_contiguous":
